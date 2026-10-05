@@ -76,12 +76,18 @@ fi
 echo ""
 
 # --- 生成 Release 说明 ---
-# 从上一个标签到现在的提交记录里汇总，跳过版本号提交本身
-PREV=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || echo "")
+# 从上一个标签到现在的提交记录里汇总
+# 注意：不能用 HEAD^ 找上一个标签 —— 那样在"打完标签后又有新提交"时会找错，
+# 导致把上一个版本的提交也算进来。应该找"当前 HEAD 之前最近的那个标签"。
+PREV=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+# 如果找到的标签就是本次要打的，说明还没提交新内容，往前再找一个
+if [ "$PREV" = "$TAG" ]; then
+  PREV=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || echo "")
+fi
 
 if [ -n "$PREV" ]; then
   echo "本次改动（自 $PREV 以来）："
-  CHANGES=$(git log --pretty=format:"- %s" "$PREV..HEAD" | grep -v "^- $TAG" || true)
+  CHANGES=$(git log --pretty=format:"- %s" "$PREV..HEAD")
 else
   echo "首次发布，汇总全部提交："
   CHANGES=$(git log --pretty=format:"- %s" | head -20)
