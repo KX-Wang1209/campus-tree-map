@@ -1,0 +1,281 @@
+[
+ {
+  "id": "baifa",
+  "name": "白蜡",
+  "latin": "Fraxinus chinensis",
+  "type": "落叶乔木",
+  "role": "行道树",
+  "icon": "🌳",
+  "color": "#7cb342"
+ },
+ {
+  "id": "guohuai",
+  "name": "国槐",
+  "latin": "Sophora japonica",
+  "type": "落叶乔木",
+  "role": "行道树",
+  "icon": "🌳",
+  "color": "#558b2f"
+ },
+ {
+  "id": "futong",
+  "name": "法桐",
+  "latin": "Platanus orientalis",
+  "type": "落叶乔木",
+  "role": "行道树",
+  "icon": "🌳",
+  "color": "#8bc34a"
+ },
+ {
+  "id": "luan",
+  "name": "栾树",
+  "latin": "Koelreuteria",
+  "type": "落叶乔木",
+  "role": "行道树",
+  "icon": "🌳",
+  "color": "#9ccc65"
+ },
+ {
+  "id": "maobaiyang",
+  "name": "毛白杨",
+  "latin": "Populus tomentosa",
+  "type": "落叶乔木",
+  "role": "行道树",
+  "icon": "🌳",
+  "color": "#689f38"
+ },
+ {
+  "id": "chouchun",
+  "name": "臭椿",
+  "latin": "Ailanthus altissima",
+  "type": "落叶乔木",
+  "role": "行道树",
+  "icon": "🌳",
+  "color": "#7cb342"
+ },
+ {
+  "id": "qiantouchun",
+  "name": "千头椿",
+  "latin": "Ailanthus altissima 'Qiantou'",
+  "type": "落叶乔木",
+  "role": "行道树",
+  "icon": "🌳",
+  "color": "#827717"
+ },
+ {
+  "id": "cihuai",
+  "name": "刺槐",
+  "latin": "Robinia pseudoacacia",
+  "type": "落叶乔木",
+  "role": "行道树",
+  "icon": "🌳",
+  "color": "#558b2f"
+ },
+ {
+  "id": "yinxing",
+  "name": "银杏",
+  "latin": "Ginkgo biloba",
+  "type": "落叶乔木",
+  "role": "庭荫树",
+  "icon": "🍂",
+  "color": "#fdd835"
+ },
+ {
+  "id": "paotong",
+  "name": "泡桐",
+  "latin": "Paulownia",
+  "type": "落叶乔木",
+  "role": "庭荫树",
+  "icon": "💜",
+  "color": "#ab47bc"
+ },
+ {
+  "id": "qingtong",
+  "name": "青桐",
+  "latin": "Firmiana simplex",
+  "type": "落叶乔木",
+  "role": "庭荫树",
+  "icon": "🌳",
+  "color": "#66bb6a"
+ },
+ {
+  "id": "hehuan",
+  "name": "合欢",
+  "latin": "Albizia julibrissin",
+  "type": "落叶乔木",
+  "role": "庭荫树",
+  "icon": "🌸",
+  "color": "#f48fb1"
+ },
+ {
+  "id": "yushu",
+  "name": "榆树",
+  "latin": "Ulmus pumila",
+  "type": "落叶乔木",
+  "role": "庭荫树",
+  "icon": "🌳",
+  "color": "#795548"
+ },
+ {
+  "id": "zhuang",
+  "name": "皂角",
+  "latin": "Gleditsia sinensis",
+  "type": "落叶乔木",
+  "role": "庭荫树",
+  "icon": "🌳",
+  "color": "#6d4c41"
+ },
+ {
+  "id": "goushu",
+  "name": "构树",
+  "latin": "Broussonetia",
+  "type": "落叶乔木",
+  "role": "庭荫树",
+  "icon": "🌳",
+  "color": "#8d6e63"
+ },
+ {
+  "id": "sang",
+  "name": "桑树",
+  "latin": "Morus alba",
+  "type": "落叶乔木",
+  "role": "庭荫树",
+  "icon": "🍇",
+  "color": "#7e57c2"
+ },
+ {
+  "id": "huangjinshu",
+  "name": "黄金树",
+  "latin": "Catalpa speciosa",
+  "type": "落叶乔木",
+  "role": "庭荫树",
+  "icon": "🌳",
+  "color": "#fbc02d"
+ },
+ {
+  "id": "kuai",
+  "name": "桧柏",
+  "latin": "Juniperus chinensis",
+  "type": "常绿乔木",
+  "role": "常绿",
+  "icon": "🌲",
+  "color": "#2e7d32"
+ },
+ {
+  "id": "you",
+  "name": "油松",
+  "latin": "Pinus tabuliformis",
+  "type": "常绿乔木",
+  "role": "常绿",
+  "icon": "🌲",
+  "color": "#1b5e20"
+ },
+ {
+  "id": "bai",
+  "name": "侧柏",
+  "latin": "Platycladus orientalis",
+  "type": "常绿乔木",
+  "role": "常绿",
+  "icon": "🌲",
+  "color": "#33691e"
+ },
+ {
+  "id": "xue",
+  "name": "雪松",
+  "latin": "Cedrus deodara",
+  "type": "常绿乔木",
+  "role": "常绿",
+  "icon": "🌲",
+  "color": "#004d40"
+ },
+ {
+  "id": "zijing",
+  "name": "紫荆",
+  "latin": "Cercis chinensis",
+  "type": "小乔木",
+  "role": "观花",
+  "icon": "🌸",
+  "color": "#ec407a"
+ },
+ {
+  "id": "zwei",
+  "name": "紫薇",
+  "latin": "Lagerstroemia indica",
+  "type": "小乔木",
+  "role": "观花",
+  "icon": "🌸",
+  "color": "#e91e63"
+ },
+ {
+  "id": "congzhi",
+  "name": "丛生紫叶李",
+  "latin": "Prunus cerasifera",
+  "type": "小乔木",
+  "role": "观花",
+  "icon": "🌸",
+  "color": "#d81b60"
+ },
+ {
+  "id": "tao",
+  "name": "碧桃",
+  "latin": "Prunus persica",
+  "type": "小乔木",
+  "role": "观花",
+  "icon": "🌸",
+  "color": "#ff80ab"
+ },
+ {
+  "id": "dingxiang",
+  "name": "丁香",
+  "latin": "Syringa",
+  "type": "灌木",
+  "role": "观花",
+  "icon": "💜",
+  "color": "#9c27b0"
+ },
+ {
+  "id": "lianshu",
+  "name": "连翘",
+  "latin": "Forsythia suspensa",
+  "type": "灌木",
+  "role": "观花",
+  "icon": "💛",
+  "color": "#ffca28"
+ },
+ {
+  "id": "huangyang",
+  "name": "大叶黄杨",
+  "latin": "Euonymus japonicus",
+  "type": "常绿灌木",
+  "role": "绿篱",
+  "icon": "🟩",
+  "color": "#00c853"
+ },
+ {
+  "id": "nvzhen",
+  "name": "女贞",
+  "latin": "Ligustrum lucidum",
+  "type": "灌木",
+  "role": "绿篱",
+  "icon": "🟩",
+  "color": "#64dd17"
+ },
+ {
+  "id": "yueji",
+  "name": "月季",
+  "latin": "Rosa chinensis",
+  "type": "灌木",
+  "role": "观花",
+  "icon": "🌹",
+  "color": "#f44336"
+ },
+ {
+  "id": "unknown",
+  "name": "暂不确定",
+  "latin": "",
+  "type": "-",
+  "role": "待定",
+  "icon": "❓",
+  "color": "#9e9e9e"
+ }
+]

@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>天津滨海职业学院 · 校园树木地图</title>
+<link rel="stylesheet" href="vendor/leaflet.css">
+<link rel="stylesheet" href="vendor/maplibre-gl.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<!-- ============ 顶部栏 ============ -->
+<header id="topbar">
+  <div class="brand">
+    <span class="brand-mark">🌳</span>
+    <div>
+      <h1>天津滨海职业学院 · 校园树木地图</h1>
+      <p id="subtitle">老校区纪念版</p>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <button id="btn-list" class="btn ghost" title="树木清单">📋 <span>清单</span></button>
+    <button id="btn-stats" class="btn ghost" title="统计">📊 <span>统计</span></button>
+    <button id="btn-help" class="btn ghost" title="使用说明">❓ <span>说明</span></button>
+  </div>
+</header>
+
+<!-- ============ 地图（2D / 3D 共用一套数据） ============ -->
+<div id="map"></div>
+<div id="map3d" style="display:none"></div>
+
+<!-- 视图切换 -->
+<div id="view-switch">
+  <button class="view-btn active" data-view="2d">平面</button>
+  <button class="view-btn" data-view="3d">三维</button>
+</div>
+
+<!-- 三维专用控件（只在三维视图显示） -->
+<div id="tools-3d" class="hidden">
+  <button id="btn-orbit" class="tool-btn" title="自动环绕旋转">
+    <span class="tb-icon">🔄</span><span class="tb-text">环绕</span>
+  </button>
+  <button id="btn-filter" class="tool-btn" title="按树种筛选">
+    <span class="tb-icon">🔍</span><span class="tb-text">筛选</span>
+  </button>
+</div>
+
+<!-- 筛选面板 -->
+<div id="filter-panel" class="hidden">
+  <div class="fp-head">
+    <span>只看这些树种</span>
+    <button id="filter-all" class="fp-all">全选</button>
+  </div>
+  <div id="filter-list" class="fp-list"></div>
+  <p class="fp-hint">未选中的树会变暗、变小</p>
+</div>
+
+<!-- 图层开关 -->
+<div id="layer-panel" class="panel collapsed">
+  <button id="layer-toggle" class="panel-head">🗂 图层</button>
+  <div class="panel-body">
+    <label><input type="checkbox" id="ly-buildings" checked> 建筑</label>
+    <label><input type="checkbox" id="ly-roads" checked> 道路</label>
+    <label><input type="checkbox" id="ly-sports" checked> 运动场地</label>
+    <label><input type="checkbox" id="ly-water" checked> 水体</label>
+    <label><input type="checkbox" id="ly-boundary" checked> 校园边界</label>
+    <label><input type="checkbox" id="ly-labels" checked> 建筑名称</label>
+    <hr>
+    <label><input type="checkbox" id="ly-trees" checked> 树木标记</label>
+    <label><input type="checkbox" id="ly-photos"> 显示照片</label>
+  </div>
+</div>
+
+<!-- 比例尺/提示 -->
+<div id="mode-bar">
+  <span id="mode-text">点地图上的树的位置，即可添加一棵树</span>
+</div>
+
+<!-- ============ 添加/编辑树木的弹窗 ============ -->
+<div id="sheet-mask" class="mask hidden"></div>
+<section id="sheet" class="sheet hidden" aria-modal="true">
+  <div class="sheet-handle"></div>
+  <div class="sheet-head">
+    <h2 id="sheet-title">添加一棵树</h2>
+    <button id="sheet-close" class="icon-btn">✕</button>
+  </div>
+
+  <div class="sheet-body">
+    <!-- 位置 -->
+    <div class="field">
+      <label>位置</label>
+      <div class="coord-row">
+        <input id="f-lat" type="text" inputmode="decimal" placeholder="纬度">
+        <input id="f-lon" type="text" inputmode="decimal" placeholder="经度">
+        <button id="btn-pick" class="btn tiny" title="回到地图重新选点">📍 重选</button>
+      </div>
+      <p class="hint" id="loc-hint">在地图上点选位置，或直接输入坐标</p>
+    </div>
+
+    <!-- 树种 -->
+    <div class="field">
+      <label>树种 <span class="req">*</span></label>
+      <div class="species-grid" id="species-grid"></div>
+      <input id="f-species-other" class="hidden" type="text" placeholder="树种的名称（本地叫法也可以）">
+    </div>
+
+    <!-- 数量 -->
+    <div class="field">
+      <label>数量</label>
+      <div class="stepper">
+        <button type="button" class="step" data-step="-1">−</button>
+        <input id="f-count" type="number" value="1" min="1" max="999">
+        <button type="button" class="step" data-step="1">＋</button>
+      </div>
+      <p class="hint">同一片连续的同种树可以合并记一条，填总棵数</p>
+    </div>
+
+    <!-- 规格 -->
+    <div class="field row2">
+      <div>
+        <label>树高（米）</label>
+        <input id="f-height" type="number" step="0.5" min="0" placeholder="选填">
+      </div>
+      <div>
+        <label>胸径（厘米）</label>
+        <input id="f-dbh" type="number" step="1" min="0" placeholder="选填">
+      </div>
+    </div>
+
+    <!-- 状态 -->
+    <div class="field">
+      <label>生长状况</label>
+      <div class="chips" id="f-health"></div>
+    </div>
+
+    <!-- 照片 -->
+    <div class="field">
+      <label>照片</label>
+      <input id="f-photo" type="file" accept="image/*" capture="environment" class="hidden">
+      <div class="photo-row">
+        <button id="btn-photo" class="btn ghost small">📷 拍照 / 选图</button>
+        <div id="photo-preview"></div>
+      </div>
+    </div>
+
+    <!-- 备注 -->
+    <div class="field">
+      <label>备注</label>
+      <textarea id="f-note" rows="2" placeholder="比如：树下有长椅 / 树皮有刻字 / 靠三号教学楼东侧"></textarea>
+    </div>
+
+    <div class="field">
+      <label>记录人</label>
+      <input id="f-recorder" type="text" placeholder="你的名字（选填，便于溯源）">
+    </div>
+  </div>
+
+  <div class="sheet-foot">
+    <button id="btn-delete" class="btn danger hidden">删除</button>
+    <button id="btn-save" class="btn primary">保存</button>
+  </div>
+</section>
+
+<!-- ============ 清单弹窗 ============ -->
+<div id="list-mask" class="mask hidden"></div>
+<section id="list-panel" class="sheet hidden">
+  <div class="sheet-handle"></div>
+  <div class="sheet-head">
+    <h2>树木清单 <span id="list-count" class="badge">0</span></h2>
+    <button id="list-close" class="icon-btn">✕</button>
+  </div>
+  <div class="list-tools">
+    <input id="list-search" type="search" placeholder="搜索树种 / 备注">
+    <select id="list-sort">
+      <option value="time">按记录时间</option>
+      <option value="species">按树种</option>
+      <option value="count">按数量</option>
+    </select>
+  </div>
+  <div id="list-body" class="list-body"></div>
+  <div class="sheet-foot">
+    <button id="btn-export-csv" class="btn ghost">导出 CSV</button>
+    <button id="btn-export-json" class="btn ghost">备份 JSON</button>
+    <button id="btn-import" class="btn ghost">导入</button>
+    <input id="file-import" type="file" accept=".json,.csv" class="hidden">
+  </div>
+</section>
+
+<!-- ============ 统计弹窗 ============ -->
+<div id="stats-mask" class="mask hidden"></div>
+<section id="stats-panel" class="sheet hidden">
+  <div class="sheet-handle"></div>
+  <div class="sheet-head">
+    <h2>统计</h2>
+    <button id="stats-close" class="icon-btn">✕</button>
+  </div>
+  <div id="stats-body" class="stats-body"></div>
+</section>
+
+<!-- ============ 合并确认弹窗 ============ -->
+<div id="merge-mask" class="mask hidden"></div>
+<section id="merge-panel" class="sheet hidden">
+  <div class="sheet-handle"></div>
+  <div class="sheet-head">
+    <h2>发现 <span id="merge-count" class="badge">0</span> 处疑似重复</h2>
+    <button id="merge-close" class="icon-btn">✕</button>
+  </div>
+  <div class="list-tools" style="grid-template-columns:1fr auto">
+    <p class="hint" id="merge-summary" style="margin:0"></p>
+    <button id="merge-all" class="btn tiny">全部合并</button>
+  </div>
+  <div id="merge-body" class="list-body"></div>
+  <div class="sheet-foot">
+    <button id="merge-cancel" class="btn ghost">取消导入</button>
+    <button id="merge-apply" class="btn primary">确认导入</button>
+  </div>
+</section>
+
+<!-- ============ 说明弹窗 ============ -->
+<div id="help-mask" class="mask hidden"></div>
+<section id="help-panel" class="sheet hidden">
+  <div class="sheet-handle"></div>
+  <div class="sheet-head">
+    <h2>怎么用</h2>
+    <button id="help-close" class="icon-btn">✕</button>
+  </div>
+  <div class="help-body">
+    <h3>给做记录的同学</h3>
+    <ol>
+      <li><b>站在树旁边</b>，等手机定位稳定（地图上蓝点不动了）。</li>
+      <li>点底部 <b>「＋ 记录身边的树」</b>，会自动用你当前位置。</li>
+      <li>选树种。不认识就点 <b>「暂不确定」</b>，先记位置，
+          回头查了再补——<b>位置比树种重要</b>。</li>
+      <li>树高拿不准没关系，估个数就行；胸径（离地 1.3 米处的树干粗细）
+          有卷尺就量，没有就跳过。</li>
+      <li>拍张照，写句备注。<b>照片是最有用的证据。</b></li>
+    </ol>
+    <p class="tip">
+      💡 <b>没有网络也能用。</b>地图和树种表都存在手机里了。
+      记录的每一棵树会立刻存到手机本地，不会因为关掉网页而丢失。
+      回到有网的地方再导出就行。
+    </p>
+    <p class="tip">
+      ⚠️ <b>注意事项</b>：每个记录建议重新点一次「＋」，
+      不要一直用同一个位置加树；一片同种的树可以合并成一条填总棵数。
+    </p>
+
+    <h3>给演示的人</h3>
+    <ul>
+      <li>「统计」看树种构成和总量，「清单」可以导出 CSV 交给老师。</li>
+      <li>所有数据都存在你自己的浏览器里，换电脑/换浏览器就看不到了，
+          记得用 <b>「备份 JSON」</b> 保存。</li>
+      <li>底图是 2025 年 5 月的卫星影像，校园西南角当时还在施工。</li>
+    </ul>
+
+    <h3>关于数据来源</h3>
+    <p class="foot-note">
+      底图：Esri World Imagery，<b>2025 年 5 月 20 日</b>拍摄，0.34 米分辨率<br>
+      建筑轮廓：OpenStreetMap（ODbL 许可）<br>
+      树种库：参考《天津市适宜园林树木栽植规范》整理<br>
+      树木数据：由师生实地记录，保存在本地
+    </p>
+    <p class="tip">
+      📅 <b>底图为什么是 2025 年 5 月的？</b>
+      这是这块地目前能拿到的最新影像。<br>
+      2026 年 Esri 更新过三次，但都没覆盖咱们学校。<br>
+      国内地图（如高德）的影像确实更新，但那张是落叶季节拍的，
+      <b>树上没有叶子、看不出树冠</b>，没法用来标树。<br>
+      所以选了这张——楼虽然旧一点，但树看得清。
+    </p>
+  </div>
+</section>
+
+<!-- ============ 底部操作 ============ -->
+<div id="fab-bar">
+  <button id="fab-add" class="fab primary">＋ 记录身边的树</button>
+</div>
+
+<!-- 轻提示 -->
+<div id="toast" class="toast hidden"></div>
+
+<script src="vendor/leaflet.js"></script>
+<script src="vendor/maplibre-gl.js"></script>
+<script src="view3d.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
