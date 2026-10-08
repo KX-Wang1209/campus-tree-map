@@ -253,8 +253,10 @@ async function initMap() {
   const bounds = await fetch('bounds.json').then((r) => r.json());
   const center = bounds.center;
 
+  // zoomSnap: 0 让 fitBounds 能落在小数级别，不然只能 18 或 17，会浪费空间
   map = L.map('map', {
     center, zoom: 18, minZoom: 16, maxZoom: 20,
+    zoomSnap: 0, zoomDelta: 0.5,
     zoomControl: false, attributionControl: false,
     maxBounds: [[bounds.south - 0.004, bounds.west - 0.004],
                 [bounds.north + 0.004, bounds.east + 0.004]],
@@ -262,8 +264,11 @@ async function initMap() {
   });
 
   // 本地瓦片底图（完全离线可用，校园里没信号也能看）
+  // minNativeZoom: 手机上屏幕窄，为了装下整个校园可能缩到 17 以下；
+  // 这时把 z17 的瓦片放大显示，不会变空白（否则会露出灰底）
   L.tileLayer('tiles/{z}/{x}_{y}.jpg', {
-    minZoom: 17, maxZoom: 20, maxNativeZoom: 19,
+    minZoom: 15, maxZoom: 20,
+    minNativeZoom: 17, maxNativeZoom: 19,
     tileSize: 256, keepBuffer: 4,
   }).addTo(map);
 
@@ -274,6 +279,8 @@ async function initMap() {
   buildBaseLayers();
   treeLayer = L.layerGroup().addTo(map);
   photoLayer = L.layerGroup().addTo(map);
+
+  fitToCampus();          // 把视野对准校园，别让四周的校外占太多
 
   map.on('click', onMapClick);
 
@@ -458,6 +465,19 @@ function renderTrees() {
     );
     pin.on('click', (e) => {
       L.DomEvent.stopPropagation(e);
+      // 「正在选点」时点到标记，应当在这个位置记一株新的，
+      // 而不是打开那棵已有的树 —— 两株树挨得近时（小苗紧挨大树），
+      // 标记的点击范围有几十米，学生根本点不到空地。
+      if (state.choosingOnMap) {
+        state.choosingOnMap = false;
+        // 用实际点击的位置，不是标记中心：挨着记的时候，
+        // 差这几米正好把两株分开
+        const ll = e.originalEvent
+          ? map.mouseEventToLatLng(e.originalEvent)
+          : e.latlng;
+        openSheet(ll.lat, ll.lng, null);
+        return;
+      }
       openSheet(t.lat, t.lon, t.id);
     });
     pin.addTo(treeLayer);
@@ -527,6 +547,58 @@ function onMapClick(e) {
   if (!state.choosingOnMap) return;
   state.choosingOnMap = false;
   openSheet(e.latlng.lat, e.latlng.lng, null);
+}
+
+/* ---------------------------------------------------------------
+   视野：把校园框进屏幕
+
+   校园是东西长、南北窄（1003 × 695 米），屏幕大多更扁，
+   所以一般是"高度"受限 —— 按高度贴满时，左右会多出一些，
+   这是几何上避不开的。
+
+   这里不用 Leaflet 的 getBoundsZoom：它把 padding 当成额外尺寸
+   加到边界上，算出来会明显偏松（实测多留了约 380 米高度）。
+   自己按"米/像素"反解，结果可控也能解释。
+   --------------------------------------------------------------- */
+function fitToCampus() {
+  const ring = campusData.boundary.coordinates[0];
+  const lons = ring.map((c) => c[0]);
+  const lats = ring.map((c) => c[1]);
+  const west = Math.min(...lons), east = Math.max(...lons);
+  const south = Math.min(...lats), north = Math.max(...lats);
+  const clat = (south + north) / 2;
+
+  const el = document.getElementById('map');
+  const w = el.clientWidth, h = el.clientHeight;
+  if (!w || !h) return;
+
+  // 界面占位（像素），按实测：地图区域本身已避开顶部栏，
+  // 左上「图层」按钮占竖向 55px 左右；底部状态条和加号是居中的，
+  // 所以只吃高度、不吃左右边缘。
+  const PAD = { left: 16, right: 16, top: 55, bottom: 72 };
+  const availW = Math.max(200, w - PAD.left - PAD.right);
+  const availH = Math.max(200, h - PAD.top - PAD.bottom);
+
+  // 校园的实地尺寸
+  const campusW = (east - west) * 111320 * Math.cos(clat * Math.PI / 180);
+  const campusH = (north - south) * 110574;
+
+  // 两个方向各算所需的"米/像素"，取较大的那个才能保证装得下
+  const mpp = Math.max(campusW / availW, campusH / availH);
+  // Web Mercator 局部各向同性：m/px = 156543.03 * cos(lat) / 2^zoom
+  const zoom = Math.log2(156543.03392 * Math.cos(clat * Math.PI / 180) / mpp);
+
+  map.setView([clat, (west + east) / 2], zoom, { animate: false });
+}
+
+/* 进入"在地图上点选位置"状态。
+
+   三维视图下 2D 地图是隐藏的，点不中 —— 先切回平面。
+   否则学生点半天没反应（「记录身边的树」没定位到时会走到这里）。 */
+function startPickingOnMap() {
+  if ($('map3d').style.display !== 'none') setView('2d');
+  state.choosingOnMap = true;
+  toast('请在地图上点选这棵树的位置');
 }
 
 /* ---------------------------------------------------------------
@@ -817,7 +889,7 @@ function distanceM(a, b) {
   return Math.sqrt(dLat * dLat + x * x) * R;
 }
 
-/** 在 pool 里找与 rec 可能是同一棵树的记录，返回 {twin, dist} 或 null */
+/** 在 pool 里找与 rec 可能是同一棵树的记录，返回 {twin, dist, sizeDiffers} 或 null */
 function findTwin(rec, pool) {
   let best = null, bestD = Infinity;
   for (const t of pool) {
@@ -829,7 +901,27 @@ function findTwin(rec, pool) {
     if (!compatible) continue;
     if (d < bestD) { bestD = d; best = t; }
   }
-  return best ? { twin: best, dist: bestD } : null;
+  return best ? { twin: best, dist: bestD, sizeDiffers: sizeDiffers(best, rec) } : null;
+}
+
+/* 同一处可能有两株不同的树（比如一株小苗挨着一株大树）。
+   位置分不出来 —— 手机定位本来就差几米，所以要看"大小"：
+   树高或胸径差得明显，就更可能是两株，而不是同一株测了两次。
+
+   门槛要拉得比较开：目测树高的误差很大，8 米和 12 米完全可能是
+   同一棵树被两个人各估了一次（1.5 倍）。所以要求差到 1.8 倍以上
+   —— 小苗和大树那种"一眼就是两株"的程度。
+
+   注意这只是"更像两株"的证据，不是定论：所以只用来调整默认选项，
+   最终仍由人确认。 */
+function sizeDiffers(a, b) {
+  const cmp = (x, y, minGap, minRatio) => {
+    if (typeof x !== 'number' || typeof y !== 'number' || x <= 0 || y <= 0) return false;
+    const hi = Math.max(x, y), lo = Math.min(x, y);
+    return hi - lo >= minGap && hi / lo >= minRatio;
+  };
+  return cmp(a.height, b.height, 3, 1.8)     // 树高：差 3 米以上且差 1.8 倍以上
+      || cmp(a.dbh, b.dbh, 6, 1.6);          // 胸径：差 6 厘米以上且差 1.6 倍以上
 }
 
 /** 把 inc 的信息并进 base（同一棵树，取更全的信息） */
@@ -993,8 +1085,11 @@ async function importFile(file) {
   const rest = [];
   for (const t of fresh) {
     const hit = findTwin(t, state.trees.filter((x) => !taken.has(x.id)));
-    if (hit) { conflicts.push({ incoming: t, twin: hit.twin, dist: hit.dist }); taken.add(hit.twin.id); }
-    else rest.push(t);
+    if (hit) {
+      conflicts.push({ incoming: t, twin: hit.twin, dist: hit.dist,
+                       sizeDiffers: hit.sizeDiffers });
+      taken.add(hit.twin.id);
+    } else rest.push(t);
   }
 
   if (!conflicts.length) {
@@ -1004,7 +1099,12 @@ async function importFile(file) {
     return;
   }
 
-  mergeCtx = { conflicts, rest, actions: conflicts.map(() => 'merge') };
+  // 大小差得明显时，默认「都保留」——一株小苗挨着一株大树，
+  // 合并会把其中一株吃掉，而这是不可逆的。
+  mergeCtx = {
+    conflicts, rest,
+    actions: conflicts.map((c) => (c.sizeDiffers ? 'keep' : 'merge')),
+  };
   renderMergeReview();
   $('merge-mask').classList.remove('hidden');
   $('merge-panel').classList.remove('hidden');
@@ -1015,9 +1115,12 @@ let mergeCtx = null;
 function renderMergeReview() {
   const { conflicts, rest, actions } = mergeCtx;
   $('merge-count').textContent = conflicts.length;
+  const nSize = conflicts.filter((c) => c.sizeDiffers).length;
   $('merge-summary').textContent =
     `另有 ${rest.length} 条位置不冲突，将直接导入。` +
-    `下面这些和已有记录离得很近（${DUP_RADIUS_M} 米内且树种相同），可能是同一棵树：`;
+    `下面这些和已有记录离得很近（${DUP_RADIUS_M} 米内且树种相同），可能是同一棵树：` +
+    (nSize ? `其中 ${nSize} 处大小差得明显，已默认选「都保留」——` +
+             `紧挨着的一大一小通常是两株，合并会把其中一株吃掉。` : '');
 
   $('merge-body').innerHTML = conflicts.map((c, i) => {
     const a = treeLabel(c.twin), b = treeLabel(c.incoming);
@@ -1028,7 +1131,8 @@ function renderMergeReview() {
         <div class="cf-meta">${escapeHtml(o.meta)}</div>
       </div>`;
     return `<div class="conflict" data-i="${i}">
-      <div class="cf-dist">相距 ${c.dist.toFixed(1)} 米</div>
+      <div class="cf-dist">相距 ${c.dist.toFixed(1)} 米${
+        c.sizeDiffers ? ' · <span class="cf-warn">大小差得明显</span>' : ''}</div>
       <div class="cf-pair">
         ${side(a, '已有')}
         ${side(b, '导入')}
@@ -1331,10 +1435,9 @@ function bind() {
   $('btn-delete').addEventListener('click', deleteTree);
 
   $('btn-pick').addEventListener('click', () => {
-    state.choosingOnMap = true;
     $('sheet-mask').classList.add('hidden');
     $('sheet').classList.add('hidden');
-    toast('请在地图上点选这棵树的位置');
+    startPickingOnMap();
   });
 
   $('f-lat').addEventListener('input', updateLocHint);
@@ -1372,10 +1475,12 @@ function bind() {
   // 底部加树：优先用 GPS
   $('fab-add').addEventListener('click', () => {
     if (window._myLatLng) {
+      // 三维视图下也要先切回平面，否则定位点落在看不见的地图上
+      if ($('map3d').style.display !== 'none') setView('2d');
       openSheet(window._myLatLng.lat, window._myLatLng.lng, null);
       map.setView(window._myLatLng, Math.max(map.getZoom(), 19));
     } else {
-      state.choosingOnMap = true;
+      startPickingOnMap();
       toast('正在定位…请在地图上点选位置，或稍候重试');
     }
   });

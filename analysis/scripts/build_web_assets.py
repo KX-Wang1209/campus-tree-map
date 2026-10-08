@@ -31,6 +31,11 @@ PAD = 0.0012
 # 网页使用的缩放级别：z17 全局，z18 中景，z19 近景（z19 为插值放大，够看）
 ZOOMS = [17, 18, 19]
 
+# z17 要多下一圈：为了让整个校园装进屏幕，宽屏幕上会缩到 z17 以下，
+# 视野比校园本身大一圈（实测 1470px 宽时视野约 1900 × 860 米）。
+# 只按校园边界下瓦片的话，边缘会露出一圈灰底。
+PAD_Z17 = 0.0050        # 经纬度，约 550 米
+
 
 def ll_to_tile(lat: float, lon: float, z: int) -> tuple[int, int]:
     n = 2**z
@@ -52,8 +57,10 @@ def build_tiles() -> dict:
     meta = {}
     total = 0
     for z in ZOOMS:
-        x0, y1 = ll_to_tile(s, w, z)
-        x1, y0 = ll_to_tile(n, e, z)
+        # z17 是"全景"层，多下一圈，保证缩小时边缘不露灰
+        pad = PAD_Z17 if z == ZOOMS[0] else 0.0
+        x0, y1 = ll_to_tile(s - pad, w - pad, z)
+        x1, y0 = ll_to_tile(n + pad, e + pad, z)
         zdir = TILES / str(z)
         zdir.mkdir(parents=True, exist_ok=True)
         cnt = 0
