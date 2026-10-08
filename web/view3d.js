@@ -432,8 +432,11 @@ function polygonCenter(geom) {
 function buildTreeFeatureCollection() {
   const feats = state.trees.map((t) => {
     const sp = speciesById(t.species);
+    const cfg = CATEGORY[categoryOf(t)];
     // 有实测树高就用，没有就按默认，让体量感更真实
     const h = t.height || 6;
+    // 大灌木、竹丛比乔木矮，尺寸上区分一下，不然三维里全一样高
+    const hEff = cfg.spec ? h : (sp.role === '竹类' ? 5 : 2.2);
     return {
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [t.lon, t.lat] },
@@ -443,13 +446,16 @@ function buildTreeFeatureCollection() {
         rawSpecies: t.species,        // 筛选时要用原始 id 判断
         speciesOther: t.speciesOther || '',
         color: sp.color,
-        count: t.several ? 0 : (t.count || 1),   // 「若干」记 0，不参与数量角标
+        // 株数/丛数：草本没有，「若干」记 0（不参与数量角标）
+        count: t.several ? 0 : (cfg.count ? (t.count || 1) : 0),
         several: !!t.several,
+        amount: amountText(t),        // 用于弹窗显示（面积带单位）
+        category: cfg.short,
         note: t.note || '',
         height: t.height || null,
         dbh: t.dbh || null,
         recorder: t.recorder || '',
-        r: Math.max(3, Math.min(9, h * 0.55)),   // 树冠半径随树高变
+        r: Math.max(3, Math.min(9, hEff * 0.55)),   // 树冠半径随体量变
         dim: false,                   // 被筛选掉时为 true（变暗变小）
       },
     };
@@ -504,8 +510,8 @@ function bindTreeEvents(map3) {
       .setLngLat(f.geometry.coordinates)
       .setHTML(
         `<div style="font-family:inherit">
-           <div style="font-weight:650;font-size:14px">${escapeHtml(p.name || '树')}${
-             p.several ? ' · 若干' : (p.count > 1 ? ` ×${p.count}` : '')}</div>
+           <div style="font-weight:650;font-size:14px">${escapeHtml(p.name || '植物')}
+             <span style="font-weight:500;color:#7a8a75;font-size:12px">${escapeHtml(p.amount || '')}</span></div>
            ${bits.length ? `<div style="font-size:12px;color:#5a6b55;margin-top:3px">${
              escapeHtml(bits.join(' · '))}</div>` : ''}
          </div>`
@@ -691,23 +697,26 @@ function openFilterPanel() {
   const groups = {};
   for (const t of state.trees) {
     const sp = speciesById(t.species);
+    const cfg = CATEGORY[categoryOf(t)];
     const nm = speciesLabel(t);
-    if (!groups[nm]) groups[nm] = { name: nm, color: sp.color, count: 0, several: 0 };
+    if (!groups[nm]) groups[nm] = { name: nm, color: sp.color, count: 0, several: 0, unit: cfg.unit };
     if (t.several) groups[nm].several += 1;
-    else groups[nm].count += (t.count || 1);
+    else groups[nm].count += cfg.count ? (t.count || 1) : (t.area || 0);
   }
   const list = Object.values(groups).sort((a, b) => b.count - a.count);
 
   const chosen = VIEW3D.speciesFilter;   // null = 全选
   $('filter-list').innerHTML = list.length ? list.map((g) => {
     const on = !chosen || chosen.has(g.name);
+    const num = g.count ? `${g.count} ${g.unit}` : '';
+    const add = g.several ? `${g.count ? ' + ' : ''}${g.several} 处未定` : '';
     return `<label class="fp-row">
       <input type="checkbox" data-sp="${escapeHtml(g.name)}" ${on ? 'checked' : ''}>
       <span class="fp-dot" style="background:${g.color}"></span>
       <span class="fp-name">${escapeHtml(g.name)}</span>
-      <span class="fp-num">${g.count}${g.several ? ` + 若干${g.several}` : ''}</span>
+      <span class="fp-num">${num}${add}</span>
     </label>`;
-  }).join('') : '<p class="fp-hint" style="border:none">还没有树木记录</p>';
+  }).join('') : '<p class="fp-hint" style="border:none">还没有记录</p>';
 
   $('filter-list').querySelectorAll('input').forEach((el) => {
     el.addEventListener('change', () => {

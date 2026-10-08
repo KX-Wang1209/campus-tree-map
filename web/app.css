@@ -421,6 +421,16 @@ html, body {
   grid-column: 1 / -1; font-size: 11.5px; font-weight: 650;
   color: var(--ink-2); margin: 7px 0 -1px; letter-spacing: .4px;
 }
+/* 草本按面积记：换成面积输入框，和株数步进器二选一显示 */
+.area-row { display: flex; align-items: center; gap: 6px; }
+.area-row input {
+  width: 110px; padding: 12px 13px; font-size: 15px; font-family: inherit;
+  border: 1.5px solid var(--line); border-radius: 10px; background: #fbfcfa;
+}
+.area-row input:focus { outline: none; border-color: var(--green-light); background: #fff; }
+.area-row .unit { font-size: 13px; color: var(--ink-2); font-weight: 600; }
+.hidden { display: none !important; }
+
 /* 数量步进器 */
 .count-row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
 .stepper {
@@ -605,10 +615,18 @@ html, body {
   font-size: 25px; font-weight: 700; color: var(--green);
   line-height: 1.1; display: block;
 }
+/* 单位跟着数字走，字号小一点，不然数字多了挤成一团 */
+.stat-card .sc-num .sc-unit {
+  font-size: 12px; font-weight: 600; margin-left: 2px; color: var(--ink-2);
+}
 .stat-card .sc-label { font-size: 11px; color: var(--ink-2); margin-top: 3px; display: block; }
 
 .bar-section h3, .help-body h3 {
   font-size: 14px; margin: 19px 0 10px; font-weight: 650;
+}
+/* 分组标题右边的单位说明（按株数 / 按面积） */
+.bar-section h3 .bh-unit {
+  font-size: 11px; font-weight: 500; color: var(--ink-2); margin-left: 6px;
 }
 .help-body h3:first-child { margin-top: 6px; }
 .bar-row { margin-bottom: 9px; }

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>天津滨海职业学院 · 校园树木地图</title>
+<title>天津滨海职业学院 · 校园植物地图</title>
 <link rel="stylesheet" href="vendor/leaflet.css">
 <link rel="stylesheet" href="vendor/maplibre-gl.css">
 <link rel="stylesheet" href="app.css">
@@ -15,12 +15,12 @@
   <div class="brand">
     <span class="brand-mark">🌳</span>
     <div>
-      <h1>天津滨海职业学院 · 校园树木地图</h1>
+      <h1>天津滨海职业学院 · 校园植物地图</h1>
       <p id="subtitle">老校区纪念版</p>
     </div>
   </div>
   <div class="topbar-actions">
-    <button id="btn-list" class="btn ghost" title="树木清单">📋 <span>清单</span></button>
+    <button id="btn-list" class="btn ghost" title="记录清单">📋 <span>清单</span></button>
     <button id="btn-stats" class="btn ghost" title="统计">📊 <span>统计</span></button>
     <button id="btn-help" class="btn ghost" title="使用说明">❓ <span>说明</span></button>
   </div>
@@ -41,7 +41,7 @@
   <button id="btn-orbit" class="tool-btn" title="自动环绕旋转">
     <span class="tb-icon">🔄</span><span class="tb-text">环绕</span>
   </button>
-  <button id="btn-filter" class="tool-btn" title="按树种筛选">
+  <button id="btn-filter" class="tool-btn" title="按种类筛选">
     <span class="tb-icon">🔍</span><span class="tb-text">筛选</span>
   </button>
 </div>
@@ -49,7 +49,7 @@
 <!-- 筛选面板 -->
 <div id="filter-panel" class="hidden">
   <div class="fp-head">
-    <span>只看这些树种</span>
+    <span>只看这些种类</span>
     <button id="filter-all" class="fp-all">全选</button>
   </div>
   <div id="filter-list" class="fp-list"></div>
@@ -67,22 +67,22 @@
     <label><input type="checkbox" id="ly-boundary" checked> 校园边界</label>
     <label><input type="checkbox" id="ly-labels" checked> 建筑名称</label>
     <hr>
-    <label><input type="checkbox" id="ly-trees" checked> 树木标记</label>
+    <label><input type="checkbox" id="ly-trees" checked> 植物标记</label>
     <label><input type="checkbox" id="ly-photos"> 显示照片</label>
   </div>
 </div>
 
 <!-- 比例尺/提示 -->
 <div id="mode-bar">
-  <span id="mode-text">点地图上的树的位置，即可添加一棵树</span>
+  <span id="mode-text">点地图上的位置，即可记录一处植物</span>
 </div>
 
-<!-- ============ 添加/编辑树木的弹窗 ============ -->
+<!-- ============ 添加/编辑的弹窗 ============ -->
 <div id="sheet-mask" class="mask hidden"></div>
 <section id="sheet" class="sheet hidden" aria-modal="true">
   <div class="sheet-handle"></div>
   <div class="sheet-head">
-    <h2 id="sheet-title">添加一棵树</h2>
+    <h2 id="sheet-title">添加一处植物</h2>
     <button id="sheet-close" class="icon-btn">✕</button>
   </div>
 
@@ -98,31 +98,35 @@
       <p class="hint" id="loc-hint">在地图上点选位置，或直接输入坐标</p>
     </div>
 
-    <!-- 树种 -->
+    <!-- 种类 -->
     <div class="field">
-      <label>树种 <span class="req">*</span></label>
+      <label>种类 <span class="req">*</span></label>
       <input id="f-species-search" type="search" placeholder="🔍 输入名字快速找（如：银杏）"
              autocapitalize="off" autocorrect="off">
       <div class="species-grid" id="species-grid"></div>
-      <input id="f-species-other" class="hidden" type="text" placeholder="树种的名称（本地叫法也可以）">
+      <input id="f-species-other" class="hidden" type="text" placeholder="名称（本地叫法也可以）">
     </div>
 
-    <!-- 数量 -->
-    <div class="field">
-      <label>数量</label>
+    <!-- 该记的量：跟着类别变（乔木株数 / 灌木株数 / 草本面积 / 竹类丛数） -->
+    <div class="field" id="field-amount">
+      <label id="amount-label">数量</label>
       <div class="count-row">
         <div class="stepper" id="count-stepper">
           <button type="button" class="step" data-step="-1">−</button>
           <input id="f-count" type="number" value="1" min="1" max="999">
           <button type="button" class="step" data-step="1">＋</button>
         </div>
+        <div class="area-row" id="area-row">
+          <input id="f-area" type="number" step="0.5" min="0" placeholder="面积">
+          <span class="unit">m²</span>
+        </div>
         <button type="button" id="btn-several" class="chip several">若干</button>
       </div>
-      <p class="hint" id="count-hint">同一片连续的同种树可以合并记一条，填总棵数</p>
+      <p class="hint" id="count-hint">同一片连续的同种树可以合并记一条，填总株数</p>
     </div>
 
-    <!-- 规格 -->
-    <div class="field row2">
+    <!-- 规格：只有乔木记胸径和树高 -->
+    <div class="field row2" id="field-spec">
       <div>
         <label>树高（米）</label>
         <input id="f-height" type="number" step="0.5" min="0" placeholder="选填">
@@ -172,14 +176,14 @@
 <section id="list-panel" class="sheet hidden">
   <div class="sheet-handle"></div>
   <div class="sheet-head">
-    <h2>树木清单 <span id="list-count" class="badge">0</span></h2>
+    <h2>记录清单 <span id="list-count" class="badge">0</span></h2>
     <button id="list-close" class="icon-btn">✕</button>
   </div>
   <div class="list-tools">
-    <input id="list-search" type="search" placeholder="搜索树种 / 备注">
+    <input id="list-search" type="search" placeholder="搜索种名 / 备注">
     <select id="list-sort">
       <option value="time">按记录时间</option>
-      <option value="species">按树种</option>
+      <option value="species">按种类</option>
       <option value="count">按数量</option>
     </select>
   </div>
@@ -233,27 +237,28 @@
   <div class="help-body">
     <h3>给做记录的同学</h3>
     <ol>
-      <li><b>站在树旁边</b>，等手机定位稳定（地图上蓝点不动了）。</li>
-      <li>点底部 <b>「＋ 记录身边的树」</b>，会自动用你当前位置。</li>
-      <li>选树种。不认识就点 <b>「暂不确定」</b>，先记位置，
-          回头查了再补——<b>位置比树种重要</b>。</li>
-      <li>树高拿不准没关系，估个数就行；胸径（离地 1.3 米处的树干粗细）
-          有卷尺就量，没有就跳过。</li>
+      <li><b>站到植物旁边</b>，等手机定位稳定（地图上蓝点不动了）。</li>
+      <li>点底部 <b>「＋ 记录身边的植物」</b>，会自动用你当前位置。</li>
+      <li>选种类。不认识就点 <b>「暂不确定」</b>，先记位置，
+          回头查了再补——<b>位置比种名重要</b>。</li>
+      <li><b>不同类别要填的东西不一样</b>：乔木填株数、树高、胸径；
+          灌木写株数；草本写面积；竹类写丛数。表格会自动变，不用你选。</li>
       <li>拍张照，写句备注。<b>照片是最有用的证据。</b></li>
     </ol>
     <p class="tip">
-      💡 <b>没有网络也能用。</b>地图和树种表都存在手机里了。
-      记录的每一棵树会立刻存到手机本地，不会因为关掉网页而丢失。
+      💡 <b>没有网络也能用。</b>地图和物种表都存在手机里了。
+      每记一条会立刻存到手机本地，不会因为关掉网页而丢失。
       回到有网的地方再导出就行。
     </p>
     <p class="tip">
-      ⚠️ <b>注意事项</b>：每个记录建议重新点一次「＋」，
-      不要一直用同一个位置加树；一片同种的树可以合并成一条填总棵数。
+      ⚠️ <b>注意事项</b>：每条记录都重新点一次「＋」再选位置，
+      不要一直用同一个位置加；成片同种的可以合并成一条，填总量。
+      数量数不清就点 <b>「若干」</b>，不要硬编一个数字。
     </p>
 
     <h3>给演示的人</h3>
     <ul>
-      <li>「统计」看树种构成和总量，「清单」可以导出 CSV 交给老师。</li>
+      <li>「统计」看各类构成和总量，「清单」可以导出 CSV 交给老师。</li>
       <li>所有数据都存在你自己的浏览器里，换电脑/换浏览器就看不到了，
           记得用 <b>「备份 JSON」</b> 保存。</li>
       <li>底图是 2025 年 5 月的卫星影像，校园西南角当时还在施工。</li>
@@ -263,8 +268,8 @@
     <p class="foot-note">
       底图：Esri World Imagery，<b>2025 年 5 月 20 日</b>拍摄，0.34 米分辨率<br>
       建筑轮廓：OpenStreetMap（ODbL 许可）<br>
-      树种库：参考《天津市适宜园林树木栽植规范》整理<br>
-      树木数据：由师生实地记录，保存在本地
+      物种库：学校《校园植物名录（26年10月）》，共 65 种<br>
+      植物数据：由师生实地记录，保存在本地
     </p>
     <p class="tip">
       📅 <b>底图为什么是 2025 年 5 月的？</b>
@@ -279,7 +284,7 @@
 
 <!-- ============ 底部操作 ============ -->
 <div id="fab-bar">
-  <button id="fab-add" class="fab primary">＋ 记录身边的树</button>
+  <button id="fab-add" class="fab primary">＋ 记录身边的植物</button>
 </div>
 
 <!-- 轻提示 -->

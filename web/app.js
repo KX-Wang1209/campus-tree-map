@@ -421,19 +421,80 @@ function speciesLabel(t) {
   return sp.name;
 }
 
-/** 数量：数不清时显示「若干」，否则显示具体数 */
-function countText(t) {
-  return t.several ? '若干' : String(t.count || 1);
+/* ---------------------------------------------------------------
+   四类植物各记各的
+
+   字段照着学校《校园植物名录》的列来：
+     乔木        —— 胸径、树高、株数
+     灌木或藤木  —— 株数
+     草本        —— 面积
+     竹类        —— 株数（丛数）
+
+   注意单位：株、丛、平方米是三种东西，统计时分开算，
+   不能加在一起（加出来的数没有意义）。
+   --------------------------------------------------------------- */
+const CATEGORY = {
+  '乔木':       { unit: '株', spec: true,  count: true,  name: '株数',
+                  short: '乔木', hint: '同一片连续的同种树可以合并记一条，填总株数' },
+  '灌木或藤木': { unit: '株', spec: false, count: true,  name: '株数',
+                  short: '灌木', hint: '成片的绿篱、地被可以合并记一条，填总株数' },
+  '草本':       { unit: 'm²', spec: false, count: false, name: '面积（平方米）',
+                  short: '草本', hint: '填这一片草本的面积，估个大概即可' },
+  '竹类':       { unit: '丛', spec: false, count: true,  name: '丛数',
+                  short: '竹类', hint: '按丛数记，一丛算一处' },
+  // 树种还没认出来时，字段都放开，免得信息记不下
+  '待定':       { unit: '株', spec: true,  count: true,  name: '株数',
+                  short: '未定', hint: '同一片连续的同种植物可以合并记一条' },
+};
+
+/** 这条记录属于哪一类（跟着所选树种走） */
+function categoryOf(t) {
+  const sp = speciesById(t.species);
+  return CATEGORY[sp.role] ? sp.role : '待定';
 }
 
-/** 统计总数时，只能把确定的数字加起来，「若干」单独说明 */
-function sumCounts(list) {
-  return list.reduce((s, t) => s + (t.several ? 0 : (t.count || 1)), 0);
+/**【该记的量】带单位显示：草本看面积，其余看株数/丛数 */
+function amountText(t) {
+  const cfg = CATEGORY[categoryOf(t)];
+  if (!cfg.count) {
+    return t.several ? '面积未测' : (t.area ? `${t.area} m²` : '面积未测');
+  }
+  return t.several ? '若干' : `${t.count || 1} ${cfg.unit}`;
 }
 
-function severalNote(list) {
-  const n = list.filter((t) => t.several).length;
-  return n ? `（另有 ${n} 处若干）` : '';
+/** 地图角标：短，只标"这一处有多株"或"数不清" */
+function pinBadge(t) {
+  const cfg = CATEGORY[categoryOf(t)];
+  if (t.several) return `<div class="pin-count several">${cfg.count ? '若干' : '未测'}</div>`;
+  if (cfg.count && t.count > 1) return `<div class="pin-count">${t.count}</div>`;
+  return '';
+}
+
+/** 按类别合计（株、丛、m² 分开加） */
+function summarize(list) {
+  const sums = {}, several = {};
+  for (const k of Object.keys(CATEGORY)) { sums[k] = 0; several[k] = 0; }
+  for (const t of list) {
+    const c = categoryOf(t);
+    if (t.several) { several[c] += 1; continue; }
+    sums[c] += CATEGORY[c].count ? (t.count || 1) : (t.area || 0);
+  }
+  return { sums, several };
+}
+
+/** 一行文字概括各类合计，只列有数据的 */
+function summaryLine(list) {
+  const { sums, several } = summarize(list);
+  const parts = [];
+  for (const k of ['乔木', '灌木或藤木', '草本', '竹类', '待定']) {
+    const v = sums[k], n = several[k];
+    if (!v && !n) continue;
+    const cfg = CATEGORY[k];
+    let s = cfg.count ? `${v} ${cfg.unit}` : `${v} m²`;
+    if (n) s += ` + ${n} 处${cfg.count ? '若干' : '未测'}`;
+    parts.push(`${cfg.short} ${s}`);
+  }
+  return parts.join(' · ');
 }
 
 function renderTrees() {
@@ -444,9 +505,7 @@ function renderTrees() {
 
   for (const t of state.trees) {
     const sp = speciesById(t.species);
-    const badge = t.several
-      ? '<div class="pin-count several">若干</div>'
-      : (t.count > 1 ? `<div class="pin-count">${t.count}</div>` : '');
+    const badge = pinBadge(t);
     const pin = L.marker([t.lat, t.lon], {
       icon: L.divIcon({
         className: 'tree-pin' + (t.id === state.selectedId ? ' selected' : ''),
@@ -458,8 +517,7 @@ function renderTrees() {
       riseOnHover: true,
     });
     pin.bindTooltip(
-      `<b>${escapeHtml(speciesLabel(t))}</b>${
-        t.several ? ' · 若干' : (t.count > 1 ? ` × ${t.count}` : '')}` +
+      `<b>${escapeHtml(speciesLabel(t))}</b> · ${escapeHtml(amountText(t))}` +
       (t.note ? `<br><span style="font-size:11px">${escapeHtml(t.note)}</span>` : ''),
       { direction: 'top', offset: [0, -24] }
     );
@@ -501,24 +559,19 @@ function renderTrees() {
 }
 
 function updateModeBar() {
-  const total = sumCounts(state.trees);
-  const sv = severalNote(state.trees);
+  const line = summaryLine(state.trees);
+  const stat = state.trees.length ? `已记 ${state.trees.length} 条 · ${line}` : '';
   if (collab.enabled) {
     const who = collab.online > 1 ? ` · ${collab.online} 人在线` : '';
-    const stat = state.trees.length
-      ? `已记 ${state.trees.length} 条 / 共 ${total} 棵${sv}`
-      : '点地图添加第一棵树';
     // 局域网地址一直显示，老师任何时候都能看到该发什么给学生
     const share = serverInfo.lan
       ? ` · <span id="lan-addr" title="点一下复制，发给学生">📱 ${escapeHtml(serverInfo.lan)}</span>`
       : '';
-    $('mode-text').innerHTML = `🟢 实时协作中${who} · ${stat}${share}`;
+    $('mode-text').innerHTML = `🟢 实时协作中${who}${stat ? ' · ' + stat : ''}${share}`;
     bindLanAddr();
     return;
   }
-  $('mode-text').textContent = state.trees.length
-    ? `已记录 ${state.trees.length} 条 · 共 ${total} 棵`
-    : '点地图上的树的位置，即可添加一棵树';
+  $('mode-text').textContent = stat || '点地图上的位置，即可记录一处植物';
 }
 
 /** 让状态栏里的局域网地址可以点一下就复制 */
@@ -621,17 +674,15 @@ function openSheet(lat, lon, id) {
   state.spSearch = '';
   if ($('f-species-search')) $('f-species-search').value = '';
 
-  $('sheet-title').textContent = existing ? '编辑这棵树' : '添加一棵树';
+  $('sheet-title').textContent = existing ? '编辑这一处' : '添加一处植物';
   $('btn-delete').classList.toggle('hidden', !existing);
   $('f-lat').value = lat.toFixed(6);
   $('f-lon').value = lon.toFixed(6);
-  $('f-count').value = state.draft.count || 1;
   $('f-species-other').value = state.draft.speciesOther || '';
-  $('f-height').value = state.draft.height ?? '';
-  $('f-dbh').value = state.draft.dbh ?? '';
   $('f-note').value = state.draft.note || '';
   $('f-recorder').value = state.draft.recorder || '';
 
+  loadDraftValues();
   renderSpeciesGrid();
   renderHealthChips();
   renderPhotoPreview();
@@ -641,6 +692,15 @@ function openSheet(lat, lon, id) {
   $('sheet-mask').classList.remove('hidden');
   $('sheet').classList.remove('hidden');
   $('sheet').scrollTop = 0;
+}
+
+/** 把草稿里的数量/规格回填到表单（换树种后会再调一次） */
+function loadDraftValues() {
+  if (!state.draft) return;
+  $('f-count').value = state.draft.count || 1;
+  $('f-area').value = state.draft.area ?? '';
+  $('f-height').value = state.draft.height ?? '';
+  $('f-dbh').value = state.draft.dbh ?? '';
 }
 
 function closeSheet() {
@@ -716,8 +776,16 @@ function renderSpeciesGrid() {
   });
   grid.querySelectorAll('.sp-item').forEach((el) => {
     el.addEventListener('click', () => {
+      const changed = state.pickingSpecies !== el.dataset.sp;
       state.pickingSpecies = el.dataset.sp;
       renderSpeciesGrid();
+      // 换了树种就换字段（乔木才有树高胸径；草本是面积）
+      if (changed) {
+        const cfg = CATEGORY[speciesById(state.pickingSpecies).role] || CATEGORY['待定'];
+        if (!cfg.count) state.pickingSeveral = false;   // 面积没有「若干」
+        loadDraftValues();
+        renderCountUI();
+      }
     });
   });
 
@@ -740,14 +808,32 @@ function renderHealthChips() {
   });
 }
 
-/** 数量控件：「若干」和数字互斥 */
+/* 表单跟着树种类别变：
+     乔木        → 株数 + 树高 + 胸径
+     灌木或藤木  → 只要株数
+     草本        → 换成面积
+     竹类        → 丛数
+   还没选树种时全放开，免得学生还没选就看不到字段。 */
 function renderCountUI() {
+  const sp = speciesById(state.pickingSpecies);
+  const cfg = CATEGORY[sp.role] || CATEGORY['待定'];
+  const isArea = !cfg.count;          // 草本：按面积记
+
+  $('amount-label').textContent = cfg.name;
+  $('count-stepper').classList.toggle('hidden', isArea);
+  $('area-row').classList.toggle('hidden', !isArea);
+  $('field-spec').classList.toggle('hidden', !cfg.spec);
+
   const on = state.pickingSeveral;
   $('count-stepper').classList.toggle('off', on);
   $('btn-several').classList.toggle('active', on);
+  // 草本不叫「若干」，叫「未测」更贴切
+  $('btn-several').textContent = isArea ? '未测' : '若干';
+
   $('count-hint').textContent = on
-    ? '记作「若干」—— 统计时不并进具体棵数，只标注这一片数量不清'
-    : '同一片连续的同种树可以合并记一条，填总棵数';
+    ? (isArea ? '记作「未测」—— 统计时不并进总面积'
+              : '记作「若干」—— 统计时不并进具体数量')
+    : cfg.hint;
 }
 
 function renderPhotoPreview() {
@@ -798,25 +884,32 @@ function compressImage(file, maxSide, quality) {
   });
 }
 
-/* 保存 */
+/* 保存：只存这一类该记的字段
+     （乔木存胸径/树高/株数，灌木只存株数，草本存面积，竹类存丛数） */
 function saveSheet() {
   if (!state.pickingSpecies) {
-    toast('请选择树种（不认识就选「暂不确定」）', true);
+    toast('请选择植物种类（不认识就选「暂不确定」）', true);
     return;
   }
   const lat = parseFloat($('f-lat').value);
   const lon = parseFloat($('f-lon').value);
   if (isNaN(lat) || isNaN(lon)) return toast('位置无效，请重新选点', true);
 
-  const count = Math.max(1, parseInt($('f-count').value, 10) || 1);
+  const cfg = CATEGORY[speciesById(state.pickingSpecies).role] || CATEGORY['待定'];
   const height = parseFloat($('f-height').value);
   const dbh = parseFloat($('f-dbh').value);
+  const area = parseFloat($('f-area').value);
   const other = $('f-species-other').value.trim();
   const recorder = $('f-recorder').value.trim();
   const spPick = state.species.find((s) => s.id === state.pickingSpecies);
   const needText = state.pickingSpecies === 'unknown' || (spPick && spPick.isOther);
   if (needText && !other) {
-    toast('请填写树种名称（选了「其他」就要写清是什么）', true);
+    toast('请填写名称（选了「其他」就要写清是什么）', true);
+    return;
+  }
+  // 草本没填面积也没标未测，存下来是个空记录，不如当场问清楚
+  if (!cfg.count && !state.pickingSeveral && !(area >= 0)) {
+    toast('请填面积，或点「未测」', true);
     return;
   }
 
@@ -825,10 +918,14 @@ function saveSheet() {
     lat, lon,
     species: state.pickingSpecies,
     speciesOther: needText ? other : '',
-    several: state.pickingSeveral,     // true = 数量记作「若干」
-    count,
-    height: isNaN(height) ? null : height,
-    dbh: isNaN(dbh) ? null : dbh,
+    several: state.pickingSeveral,
+    // 株数/丛数：草本不用
+    count: cfg.count ? Math.max(1, parseInt($('f-count').value, 10) || 1) : null,
+    // 面积：只有草本用
+    area: cfg.count ? null : (isNaN(area) ? null : area),
+    // 树高/胸径：只有乔木用
+    height: cfg.spec && !isNaN(height) ? height : null,
+    dbh: cfg.spec && !isNaN(dbh) ? dbh : null,
     health: state.pickingHealth,
     note: $('f-note').value.trim(),
     recorder,
@@ -889,13 +986,15 @@ function distanceM(a, b) {
   return Math.sqrt(dLat * dLat + x * x) * R;
 }
 
-/** 在 pool 里找与 rec 可能是同一棵树的记录，返回 {twin, dist, sizeDiffers} 或 null */
+/** 在 pool 里找与 rec 可能是同一处的记录，返回 {twin, dist, sizeDiffers} 或 null */
 function findTwin(rec, pool) {
   let best = null, bestD = Infinity;
   for (const t of pool) {
     const d = distanceM(rec, t);
     if (d > DUP_RADIUS_M) continue;
-    // 树种不同且都不是"暂不确定"→ 大概率是紧邻的两棵不同的树，不算重复
+    // 类别不同（乔木 vs 草本）就是两种东西，不算重复
+    if (categoryOf(t) !== categoryOf(rec)) continue;
+    // 树种不同且都不是"暂不确定"→ 大概率是紧邻的两处不同的植物，不算重复
     const compatible = t.species === rec.species
       || t.species === 'unknown' || rec.species === 'unknown';
     if (!compatible) continue;
@@ -921,16 +1020,20 @@ function sizeDiffers(a, b) {
     return hi - lo >= minGap && hi / lo >= minRatio;
   };
   return cmp(a.height, b.height, 3, 1.8)     // 树高：差 3 米以上且差 1.8 倍以上
-      || cmp(a.dbh, b.dbh, 6, 1.6);          // 胸径：差 6 厘米以上且差 1.6 倍以上
+      || cmp(a.dbh, b.dbh, 6, 1.6)           // 胸径：差 6 厘米以上且差 1.6 倍以上
+      || cmp(a.area, b.area, 20, 2.0);       // 草本面积：差 20 平米且差 2 倍以上
 }
 
-/** 把 inc 的信息并进 base（同一棵树，取更全的信息） */
+/** 把 inc 的信息并进 base（同一处，取更全的信息） */
 function mergeInto(base, inc) {
-  // 数量：只要有一边是「若干」，结果就是「若干」（知道数的那边不会更少）
+  const cfg = CATEGORY[categoryOf(base)];
+  // 只要有一边是「若干/未测」，结果就是它（知道数的那边不会更少）
   if (base.several || inc.several) {
     base.several = true;
-  } else {
+  } else if (cfg.count) {
     base.count = Math.max(base.count || 1, inc.count || 1);
+  } else {
+    base.area = Math.max(base.area || 0, inc.area || 0);
   }
   if (base.height == null) base.height = inc.height ?? null;
   if (base.dbh == null) base.dbh = inc.dbh ?? null;
@@ -947,9 +1050,12 @@ function mergeInto(base, inc) {
 
 function treeLabel(t) {
   const sp = speciesById(t.species);
-  const bits = [countText(t) === '若干' ? '若干' : `×${t.count || 1}`];
+  const cfg = CATEGORY[categoryOf(t)];
+  const bits = [amountText(t)];
   if (t.height) bits.push(`高${t.height}m`);
   if (t.dbh) bits.push(`胸径${t.dbh}cm`);
+  // 类别不同的两条记录放在一起比较时，标出类别免得看不出差别
+  bits.push(cfg.short);
   return { icon: sp.icon, color: sp.color, name: speciesLabel(t), meta: bits.join(' · ') };
 }
 
@@ -1002,11 +1108,18 @@ function parseCSVtoTrees(text) {
     const lon = parseFloat(cell(r, '经度'));
     if (isNaN(lat) || isNaN(lon)) continue;
 
-    const spName = cell(r, '树种');
+    // 种名：新表头叫「种名」，旧表头叫「树种」，两个都认
+    const spName = cell(r, '种名') || cell(r, '树种');
     const sp = state.species.find((s) => s.name === spName || s.id === spName);
-    const cntRaw = cell(r, '数量');
-    const several = /若干|数不清|many/i.test(cntRaw);
+
+    // 数量：新表分「株数」「丛数」「面积(m2)」三列，旧表只有「数量」一列
+    const areaRaw = cell(r, '面积(m2)') || cell(r, '面积');
+    const cntRaw = cell(r, '株数') || cell(r, '丛数') || cell(r, '数量');
+    const several = /若干|数不清|many/i.test(cntRaw)
+                 || /未测/.test(areaRaw);
     const cnt = parseInt(cntRaw, 10);
+    const area = parseFloat(areaRaw);
+
     out.push({
       id: cell(r, '记录ID') || uid(),
       lat, lon,
@@ -1014,6 +1127,7 @@ function parseCSVtoTrees(text) {
       speciesOther: sp ? '' : spName,
       several,
       count: several ? 1 : (isNaN(cnt) ? 1 : Math.max(1, cnt)),
+      area: isNaN(area) ? null : area,
       height: num(cell(r, '树高(m)')),
       dbh: num(cell(r, '胸径(cm)')),
       health: cell(r, '生长状况') || '良好',
@@ -1204,7 +1318,12 @@ function renderList() {
   if (state.sort === 'species') {
     rows.sort((a, b) => speciesById(a.species).name.localeCompare(speciesById(b.species).name));
   } else if (state.sort === 'count') {
-    rows.sort((a, b) => (b.count || 1) - (a.count || 1));
+    // 株、丛、m² 单位不同，排序时按各类的量纲各自归一，避免"草本 50m²"压过"乔木 30 株"
+    const rank = (t) => {
+      const c = categoryOf(t);
+      return CATEGORY[c].count ? (t.count || 1) : (t.area || 0) / 10;
+    };
+    rows.sort((a, b) => rank(b) - rank(a));
   } else {
     rows.sort((a, b) => (b.created || 0) - (a.created || 0));
   }
@@ -1212,13 +1331,14 @@ function renderList() {
   const body = $('list-body');
   if (!rows.length) {
     body.innerHTML = `<div class="empty"><span class="em-icon">🌱</span>
-      <p>还没有记录任何树</p>
-      <p>到校园里，点「＋ 记录身边的树」开始</p></div>`;
+      <p>还没有记录</p>
+      <p>到校园里，点「＋ 记录身边的植物」开始</p></div>`;
     return;
   }
 
   body.innerHTML = rows.map((t) => {
     const sp = speciesById(t.species);
+    const cfg = CATEGORY[categoryOf(t)];
     const bits = [];
     if (t.note) bits.push(t.note);
     if (t.height) bits.push(`高 ${t.height}m`);
@@ -1230,9 +1350,8 @@ function renderList() {
     const thumb = t.photos && t.photos.length
       ? `<img class="tr-thumb" src="${t.photos[0]}" alt="">` : '';
 
-    const cnum = t.several
-      ? '<span class="tr-count several">若干</span>'
-      : (t.count > 1 ? `<span class="tr-count">×${t.count}</span>` : '');
+    const cnum = `<span class="tr-count${t.several ? ' several' : ''}">${
+      escapeHtml(amountText(t))}</span>`;
 
     return `<div class="tree-row" data-id="${t.id}">
       <div class="tr-icon" style="background:${sp.color}22">${sp.icon}</div>
@@ -1258,50 +1377,66 @@ function renderList() {
    统计
    --------------------------------------------------------------- */
 function renderStats() {
-  const total = sumCounts(state.trees);
-  const bySpecies = {};
-  for (const t of state.trees) {
-    const sp = speciesById(t.species);
-    const key = speciesLabel(t);
-    bySpecies[key] = bySpecies[key] ||
-      { count: 0, records: 0, several: 0, color: sp.color, icon: sp.icon };
-    if (t.several) bySpecies[key].several += 1;
-    else bySpecies[key].count += (t.count || 1);
-    bySpecies[key].records += 1;
-  }
-  const sorted = Object.entries(bySpecies).sort((a, b) => b[1].count - a[1].count);
-  const maxCount = sorted.length ? Math.max(1, sorted[0][1].count) : 1;
-
+  const { sums, several } = summarize(state.trees);
   const withPhoto = state.trees.filter((t) => t.photos && t.photos.length).length;
+  const hasData = state.trees.length > 0;
 
-  let html = `<div class="stat-cards">
-    <div class="stat-card"><span class="sc-num">${total}</span><span class="sc-label">树木总棵数</span></div>
-    <div class="stat-card"><span class="sc-num">${state.trees.length}</span><span class="sc-label">记录条数</span></div>
-    <div class="stat-card"><span class="sc-num">${sorted.length}</span><span class="sc-label">树种数</span></div>
-  </div>
+  // 按类别分卡片：株数、丛数、面积是三种单位，分开列
+  const cards = [];
+  for (const k of ['乔木', '灌木或藤木', '草本', '竹类', '待定']) {
+    const cfg = CATEGORY[k];
+    const v = sums[k], n = several[k];
+    if (!v && !n) continue;
+    const val = cfg.count ? `${v}` : `${v}`;
+    const unit = cfg.count ? cfg.unit : 'm²';
+    cards.push(`<div class="stat-card"><span class="sc-num">${val}<span class="sc-unit">${unit}</span></span>
+      <span class="sc-label">${cfg.short}${n ? `（另 ${n} 处${cfg.count ? '若干' : '未测'}）` : ''}</span></div>`);
+  }
+  cards.push(`<div class="stat-card"><span class="sc-num">${state.trees.length}</span>
+    <span class="sc-label">记录条数</span></div>`);
+
+  let html = `<div class="stat-cards">${cards.join('')}</div>
   <div class="stat-cards">
     <div class="stat-card"><span class="sc-num">${withPhoto}</span><span class="sc-label">带照片的记录</span></div>
-    <div class="stat-card"><span class="sc-num">${total > 0 ? (total / state.trees.length).toFixed(1) : '—'}</span><span class="sc-label">平均每处棵数</span></div>
-    <div class="stat-card"><span class="sc-num">${new Set(state.trees.map(t => t.recorder).filter(Boolean)).size}</span><span class="sc-label">参与记录人</span></div>
+    <div class="stat-card"><span class="sc-num">${
+      new Set(state.trees.map(t => speciesLabel(t))).size}</span><span class="sc-label">涉及种类</span></div>
+    <div class="stat-card"><span class="sc-num">${
+      new Set(state.trees.map(t => t.recorder).filter(Boolean)).size}</span><span class="sc-label">参与记录人</span></div>
   </div>`;
 
-  // 有「若干」时说明一句，免得看总数的人以为漏了
-  const svNote = severalNote(state.trees);
-  if (svNote) {
-    html += `<p class="hint" style="margin:2px 2px 10px">${svNote.replace(/[（）]/g, '')}
-      —— 这些点数量数不清，没有并进上面的棵数</p>`;
+  if (!hasData) {
+    html += `<div class="empty"><span class="em-icon">📊</span>
+      <p>还没有数据可统计</p><p>先去记录几处吧</p></div>`;
+    $('stats-body').innerHTML = html;
+    return;
   }
 
-  if (sorted.length) {
-    html += `<div class="bar-section"><h3>树种构成</h3>`;
+  // 按类别分组列明细：同一类别里的数值单位一致，才能比长短
+  for (const k of ['乔木', '灌木或藤木', '草本', '竹类', '待定']) {
+    const cfg = CATEGORY[k];
+    const rows = state.trees.filter((t) => categoryOf(t) === k);
+    if (!rows.length) continue;
+
+    const byName = {};
+    for (const t of rows) {
+      const nm = speciesLabel(t);
+      byName[nm] = byName[nm] || { icon: speciesById(t.species).icon, color: speciesById(t.species).color,
+                                   value: 0, several: 0, records: 0 };
+      if (t.several) byName[nm].several += 1;
+      else byName[nm].value += cfg.count ? (t.count || 1) : (t.area || 0);
+      byName[nm].records += 1;
+    }
+    const sorted = Object.entries(byName).sort((a, b) => b[1].value - a[1].value);
+    const maxV = Math.max(1, ...sorted.map(([, v]) => v.value));
+    const unit = cfg.count ? cfg.unit : 'm²';
+
+    html += `<div class="bar-section"><h3>${cfg.short}
+      <span class="bh-unit">${cfg.count ? `按${cfg.name}` : '按面积'}</span></h3>`;
     for (const [name, info] of sorted) {
-      // 只有「若干」的树种，条子也要看得见一小截，否则会以为没数据
-      const pct = info.count
-        ? (info.count / maxCount * 100).toFixed(1)
-        : (info.several ? 3 : 0);
-      const num = info.count && info.several
-        ? `${info.count} 棵 + 若干 ${info.several} 处`
-        : (info.several ? `若干 ${info.several} 处` : `${info.count} 棵`);
+      const pct = info.value ? (info.value / maxV * 100).toFixed(1) : (info.several ? 3 : 0);
+      const num = info.value && info.several
+        ? `${info.value} ${unit} + ${info.several} 处${cfg.count ? '若干' : '未测'}`
+        : (info.several ? `${info.several} 处${cfg.count ? '若干' : '未测'}` : `${info.value} ${unit}`);
       html += `<div class="bar-row">
         <div class="bar-head"><span>${info.icon} ${escapeHtml(name)}</span>
           <span class="bh-num">${num}</span></div>
@@ -1310,9 +1445,6 @@ function renderStats() {
       </div>`;
     }
     html += `</div>`;
-  } else {
-    html += `<div class="empty"><span class="em-icon">📊</span>
-      <p>还没有数据可统计</p><p>先去记录几棵树吧</p></div>`;
   }
 
   $('stats-body').innerHTML = html;
@@ -1321,17 +1453,32 @@ function renderStats() {
 /* ---------------------------------------------------------------
    导入 / 导出
    --------------------------------------------------------------- */
+/* 导出的表头照着学校《校园植物名录》的列来 ——
+   这份 CSV 是要交给学校的，列名对得上才好并进总表。
+   四类记的东西不同，所以要分开列（株数 / 丛数 / 面积）。 */
 function exportCSV() {
   if (!state.trees.length) return toast('还没有数据可导出', true);
-  const head = ['记录ID','树种','其他名称','纬度','经度','数量','树高(m)','胸径(cm)',
-                '生长状况','备注','记录人','记录时间','照片数'];
+  const head = ['记录ID', '类别', '种名', '其他名称', '纬度', '经度',
+                '株数', '丛数', '面积(m2)', '树高(m)', '胸径(cm)',
+                '生长状况', '备注', '记录人', '记录时间', '照片数'];
   const lines = [head.join(',')];
+
   for (const t of state.trees) {
-    const sp = speciesById(t.species);
+    const k = categoryOf(t);
+    const isTree = k === '乔木';
+    const isBamboo = k === '竹类';
+    const isHerb = k === '草本';
     const row = [
-      t.id, speciesLabel(t), t.speciesOther || '', t.lat.toFixed(6), t.lon.toFixed(6),
-      t.several ? '若干' : (t.count || 1),
-      t.height ?? '', t.dbh ?? '', t.health || '',
+      t.id, CATEGORY[k].short, speciesLabel(t), t.speciesOther || '',
+      t.lat.toFixed(6), t.lon.toFixed(6),
+      // 株数 / 丛数：只有对应的类别才填，「若干」写成字
+      isTree || k === '灌木或藤木' || k === '待定'
+        ? (t.several ? '若干' : (t.count || 1)) : '',
+      isBamboo ? (t.several ? '若干' : (t.count || 1)) : '',
+      isHerb ? (t.several ? '未测' : (t.area ?? '')) : '',
+      isTree ? (t.height ?? '') : '',
+      isTree ? (t.dbh ?? '') : '',
+      t.health || '',
       t.note || '', t.recorder || '', fmtTime(t.created), (t.photos || []).length,
     ].map((v) => {
       const s = String(v);
@@ -1342,7 +1489,7 @@ function exportCSV() {
   const who = [...new Set(state.trees.map((t) => t.recorder).filter(Boolean))].join('+');
   // 加 BOM 让 Excel 正确识别中文
   downloadFile('\ufeff' + lines.join('\r\n'),
-    `校园树木记录${who ? '_' + who : ''}_${exportStamp()}.csv`, 'text/csv;charset=utf-8');
+    `校园植物记录${who ? '_' + who : ''}_${exportStamp()}.csv`, 'text/csv;charset=utf-8');
   toast('已导出 CSV');
 }
 
