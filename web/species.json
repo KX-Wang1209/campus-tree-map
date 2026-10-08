@@ -1,279 +1,494 @@
 [
  {
-  "id": "baifa",
-  "name": "白蜡",
-  "latin": "Fraxinus chinensis",
-  "type": "落叶乔木",
-  "role": "行道树",
-  "icon": "🌳",
-  "color": "#7cb342"
- },
- {
-  "id": "guohuai",
-  "name": "国槐",
-  "latin": "Sophora japonica",
-  "type": "落叶乔木",
-  "role": "行道树",
-  "icon": "🌳",
-  "color": "#558b2f"
- },
- {
-  "id": "futong",
-  "name": "法桐",
-  "latin": "Platanus orientalis",
-  "type": "落叶乔木",
-  "role": "行道树",
-  "icon": "🌳",
-  "color": "#8bc34a"
- },
- {
-  "id": "luan",
-  "name": "栾树",
-  "latin": "Koelreuteria",
-  "type": "落叶乔木",
-  "role": "行道树",
-  "icon": "🌳",
-  "color": "#9ccc65"
- },
- {
-  "id": "maobaiyang",
-  "name": "毛白杨",
-  "latin": "Populus tomentosa",
-  "type": "落叶乔木",
-  "role": "行道树",
-  "icon": "🌳",
-  "color": "#689f38"
- },
- {
-  "id": "chouchun",
-  "name": "臭椿",
-  "latin": "Ailanthus altissima",
-  "type": "落叶乔木",
-  "role": "行道树",
-  "icon": "🌳",
-  "color": "#7cb342"
- },
- {
-  "id": "qiantouchun",
-  "name": "千头椿",
-  "latin": "Ailanthus altissima 'Qiantou'",
-  "type": "落叶乔木",
-  "role": "行道树",
-  "icon": "🌳",
-  "color": "#827717"
- },
- {
-  "id": "cihuai",
-  "name": "刺槐",
-  "latin": "Robinia pseudoacacia",
-  "type": "落叶乔木",
-  "role": "行道树",
-  "icon": "🌳",
-  "color": "#558b2f"
- },
- {
   "id": "yinxing",
   "name": "银杏",
-  "latin": "Ginkgo biloba",
-  "type": "落叶乔木",
-  "role": "庭荫树",
+  "role": "乔木",
   "icon": "🍂",
   "color": "#fdd835"
  },
  {
-  "id": "paotong",
-  "name": "泡桐",
-  "latin": "Paulownia",
-  "type": "落叶乔木",
-  "role": "庭荫树",
-  "icon": "💜",
-  "color": "#ab47bc"
- },
- {
-  "id": "qingtong",
-  "name": "青桐",
-  "latin": "Firmiana simplex",
-  "type": "落叶乔木",
-  "role": "庭荫树",
-  "icon": "🌳",
-  "color": "#66bb6a"
- },
- {
-  "id": "hehuan",
-  "name": "合欢",
-  "latin": "Albizia julibrissin",
-  "type": "落叶乔木",
-  "role": "庭荫树",
-  "icon": "🌸",
-  "color": "#f48fb1"
- },
- {
-  "id": "yushu",
-  "name": "榆树",
-  "latin": "Ulmus pumila",
-  "type": "落叶乔木",
-  "role": "庭荫树",
-  "icon": "🌳",
-  "color": "#795548"
- },
- {
-  "id": "zhuang",
-  "name": "皂角",
-  "latin": "Gleditsia sinensis",
-  "type": "落叶乔木",
-  "role": "庭荫树",
-  "icon": "🌳",
-  "color": "#6d4c41"
- },
- {
-  "id": "goushu",
-  "name": "构树",
-  "latin": "Broussonetia",
-  "type": "落叶乔木",
-  "role": "庭荫树",
-  "icon": "🌳",
-  "color": "#8d6e63"
- },
- {
-  "id": "sang",
-  "name": "桑树",
-  "latin": "Morus alba",
-  "type": "落叶乔木",
-  "role": "庭荫树",
-  "icon": "🍇",
-  "color": "#7e57c2"
- },
- {
-  "id": "huangjinshu",
-  "name": "黄金树",
-  "latin": "Catalpa speciosa",
-  "type": "落叶乔木",
-  "role": "庭荫树",
-  "icon": "🌳",
-  "color": "#fbc02d"
- },
- {
-  "id": "kuai",
-  "name": "桧柏",
-  "latin": "Juniperus chinensis",
-  "type": "常绿乔木",
-  "role": "常绿",
+  "id": "yuanbai",
+  "name": "圆柏",
+  "role": "乔木",
   "icon": "🌲",
   "color": "#2e7d32"
  },
  {
-  "id": "you",
-  "name": "油松",
-  "latin": "Pinus tabuliformis",
-  "type": "常绿乔木",
-  "role": "常绿",
-  "icon": "🌲",
-  "color": "#1b5e20"
+  "id": "maobaiyang",
+  "name": "毛白杨",
+  "role": "乔木",
+  "icon": "🌳",
+  "color": "#558b2f"
  },
  {
-  "id": "bai",
-  "name": "侧柏",
-  "latin": "Platycladus orientalis",
-  "type": "常绿乔木",
-  "role": "常绿",
-  "icon": "🌲",
-  "color": "#33691e"
+  "id": "liushu",
+  "name": "柳树",
+  "role": "乔木",
+  "icon": "🌳",
+  "color": "#7cb342"
  },
  {
-  "id": "xue",
-  "name": "雪松",
-  "latin": "Cedrus deodara",
-  "type": "常绿乔木",
-  "role": "常绿",
-  "icon": "🌲",
-  "color": "#004d40"
+  "id": "hetao",
+  "name": "核桃",
+  "role": "乔木",
+  "icon": "🌰",
+  "color": "#6d4c41"
  },
  {
-  "id": "zijing",
-  "name": "紫荆",
-  "latin": "Cercis chinensis",
-  "type": "小乔木",
-  "role": "观花",
+  "id": "yushu",
+  "name": "榆树",
+  "role": "乔木",
+  "icon": "🌳",
+  "color": "#795548"
+ },
+ {
+  "id": "yulan",
+  "name": "玉兰",
+  "role": "乔木",
+  "icon": "🌸",
+  "color": "#f48fb1"
+ },
+ {
+  "id": "xuanlingmu",
+  "name": "悬铃木",
+  "role": "乔木",
+  "icon": "🌳",
+  "color": "#8bc34a"
+ },
+ {
+  "id": "pingguo",
+  "name": "苹果",
+  "role": "乔木",
+  "icon": "🍎",
+  "color": "#ef5350"
+ },
+ {
+  "id": "xifuhaitang",
+  "name": "西府海棠",
+  "role": "乔木",
   "icon": "🌸",
   "color": "#ec407a"
  },
  {
-  "id": "zwei",
-  "name": "紫薇",
-  "latin": "Lagerstroemia indica",
-  "type": "小乔木",
-  "role": "观花",
+  "id": "chuisihaitang",
+  "name": "垂丝海棠",
+  "role": "乔木",
   "icon": "🌸",
-  "color": "#e91e63"
+  "color": "#f06292"
  },
  {
-  "id": "congzhi",
-  "name": "丛生紫叶李",
-  "latin": "Prunus cerasifera",
-  "type": "小乔木",
-  "role": "观花",
+  "id": "hongbaoshi",
+  "name": "红宝石海棠",
+  "role": "乔木",
   "icon": "🌸",
   "color": "#d81b60"
  },
  {
-  "id": "tao",
+  "id": "shanzha",
+  "name": "山楂",
+  "role": "乔木",
+  "icon": "🌳",
+  "color": "#c62828"
+ },
+ {
+  "id": "lishu",
+  "name": "梨树",
+  "role": "乔木",
+  "icon": "🍐",
+  "color": "#aed581"
+ },
+ {
+  "id": "lishu2",
+  "name": "李树",
+  "role": "乔木",
+  "icon": "🌳",
+  "color": "#9ccc65"
+ },
+ {
+  "id": "ziyeli",
+  "name": "紫叶李",
+  "role": "乔木",
+  "icon": "🍂",
+  "color": "#7b1fa2"
+ },
+ {
+  "id": "ribenwanying",
+  "name": "日本晚樱",
+  "role": "乔木",
+  "icon": "🌸",
+  "color": "#f8bbd0"
+ },
+ {
+  "id": "shantao",
+  "name": "山桃",
+  "role": "乔木",
+  "icon": "🌸",
+  "color": "#f48fb1"
+ },
+ {
+  "id": "maotao",
+  "name": "毛桃",
+  "role": "乔木",
+  "icon": "🍑",
+  "color": "#ffb74d"
+ },
+ {
+  "id": "bitao",
   "name": "碧桃",
-  "latin": "Prunus persica",
-  "type": "小乔木",
-  "role": "观花",
+  "role": "乔木",
   "icon": "🌸",
   "color": "#ff80ab"
  },
  {
-  "id": "dingxiang",
-  "name": "丁香",
-  "latin": "Syringa",
-  "type": "灌木",
-  "role": "观花",
+  "id": "yingtao",
+  "name": "樱桃",
+  "role": "乔木",
+  "icon": "🍒",
+  "color": "#e53935"
+ },
+ {
+  "id": "xingshu",
+  "name": "杏树",
+  "role": "乔木",
+  "icon": "🌸",
+  "color": "#ffb300"
+ },
+ {
+  "id": "hehuan",
+  "name": "合欢",
+  "role": "乔木",
+  "icon": "🌸",
+  "color": "#f06292"
+ },
+ {
+  "id": "cihuai",
+  "name": "刺槐",
+  "role": "乔木",
+  "icon": "🌳",
+  "color": "#689f38"
+ },
+ {
+  "id": "guohuai",
+  "name": "国槐",
+  "role": "乔木",
+  "icon": "🌳",
+  "color": "#33691e"
+ },
+ {
+  "id": "longzhuai",
+  "name": "龙爪槐",
+  "role": "乔木",
+  "icon": "🌳",
+  "color": "#558b2f"
+ },
+ {
+  "id": "wuyehuai",
+  "name": "五叶槐",
+  "role": "乔木",
+  "icon": "🌳",
+  "color": "#7cb342"
+ },
+ {
+  "id": "chouchun",
+  "name": "臭椿",
+  "role": "乔木",
+  "icon": "🌳",
+  "color": "#827717"
+ },
+ {
+  "id": "xiangchun",
+  "name": "香椿",
+  "role": "乔木",
+  "icon": "🌿",
+  "color": "#afb42b"
+ },
+ {
+  "id": "huojushu",
+  "name": "火炬树",
+  "role": "乔木",
+  "icon": "🍂",
+  "color": "#bf360c"
+ },
+ {
+  "id": "huanglu",
+  "name": "黄栌",
+  "role": "乔木",
+  "icon": "🍂",
+  "color": "#8d6e63"
+ },
+ {
+  "id": "yuanbaofeng",
+  "name": "元宝枫",
+  "role": "乔木",
+  "icon": "🍁",
+  "color": "#d84315"
+ },
+ {
+  "id": "luanshu",
+  "name": "栾树",
+  "role": "乔木",
+  "icon": "🌳",
+  "color": "#cddc39"
+ },
+ {
+  "id": "zaoshu",
+  "name": "枣树",
+  "role": "乔木",
+  "icon": "🌳",
+  "color": "#a1887f"
+ },
+ {
+  "id": "shishu",
+  "name": "柿树",
+  "role": "乔木",
+  "icon": "🍊",
+  "color": "#ff7043"
+ },
+ {
+  "id": "baila",
+  "name": "白蜡",
+  "role": "乔木",
+  "icon": "🌳",
+  "color": "#43a047"
+ },
+ {
+  "id": "maopaotong",
+  "name": "毛泡桐",
+  "role": "乔木",
   "icon": "💜",
-  "color": "#9c27b0"
+  "color": "#ab47bc"
  },
  {
-  "id": "lianshu",
-  "name": "连翘",
-  "latin": "Forsythia suspensa",
-  "type": "灌木",
-  "role": "观花",
-  "icon": "💛",
-  "color": "#ffca28"
+  "id": "other_qiao",
+  "name": "其他",
+  "role": "乔木",
+  "icon": "➕",
+  "color": "#90a4ae",
+  "isOther": true
  },
  {
-  "id": "huangyang",
-  "name": "大叶黄杨",
-  "latin": "Euonymus japonicus",
-  "type": "常绿灌木",
-  "role": "绿篱",
-  "icon": "🟩",
-  "color": "#00c853"
+  "id": "xiaolongbai",
+  "name": "小龙柏",
+  "role": "灌木或藤木",
+  "icon": "🌲",
+  "color": "#1b5e20"
  },
  {
-  "id": "nvzhen",
-  "name": "女贞",
-  "latin": "Ligustrum lucidum",
-  "type": "灌木",
-  "role": "绿篱",
-  "icon": "🟩",
-  "color": "#64dd17"
+  "id": "qiangwei",
+  "name": "蔷薇",
+  "role": "灌木或藤木",
+  "icon": "🌹",
+  "color": "#f06292"
  },
  {
   "id": "yueji",
   "name": "月季",
-  "latin": "Rosa chinensis",
-  "type": "灌木",
-  "role": "观花",
+  "role": "灌木或藤木",
   "icon": "🌹",
-  "color": "#f44336"
+  "color": "#e91e63"
+ },
+ {
+  "id": "huangcimei",
+  "name": "黄刺玫",
+  "role": "灌木或藤木",
+  "icon": "🌼",
+  "color": "#fdd835"
+ },
+ {
+  "id": "yuyemei",
+  "name": "榆叶梅",
+  "role": "灌木或藤木",
+  "icon": "🌸",
+  "color": "#ec407a"
+ },
+ {
+  "id": "zhenzhumei",
+  "name": "珍珠梅",
+  "role": "灌木或藤木",
+  "icon": "🌸",
+  "color": "#cfd8dc"
+ },
+ {
+  "id": "ziteng",
+  "name": "紫藤",
+  "role": "灌木或藤木",
+  "icon": "💜",
+  "color": "#7e57c2"
+ },
+ {
+  "id": "zisuihuai",
+  "name": "紫穗槐",
+  "role": "灌木或藤木",
+  "icon": "🌿",
+  "color": "#5e35b1"
+ },
+ {
+  "id": "huajiao",
+  "name": "花椒",
+  "role": "灌木或藤木",
+  "icon": "🌿",
+  "color": "#8d6e63"
+ },
+ {
+  "id": "xiaoyehuangyang",
+  "name": "小叶黄杨",
+  "role": "灌木或藤木",
+  "icon": "🟩",
+  "color": "#00c853"
+ },
+ {
+  "id": "dayehuangyang",
+  "name": "大叶黄杨",
+  "role": "灌木或藤木",
+  "icon": "🟩",
+  "color": "#64dd17"
+ },
+ {
+  "id": "wuyedijin",
+  "name": "五叶地锦",
+  "role": "灌木或藤木",
+  "icon": "🍁",
+  "color": "#c62828"
+ },
+ {
+  "id": "mujin",
+  "name": "木槿",
+  "role": "灌木或藤木",
+  "icon": "🌺",
+  "color": "#ab47bc"
+ },
+ {
+  "id": "chengliu",
+  "name": "柽柳",
+  "role": "灌木或藤木",
+  "icon": "🌸",
+  "color": "#f48fb1"
+ },
+ {
+  "id": "ziwei",
+  "name": "紫薇",
+  "role": "灌木或藤木",
+  "icon": "🌸",
+  "color": "#e91e63"
+ },
+ {
+  "id": "shiliu",
+  "name": "石榴",
+  "role": "灌木或藤木",
+  "icon": "🌺",
+  "color": "#ff5722"
+ },
+ {
+  "id": "hongruimu",
+  "name": "红瑞木",
+  "role": "灌木或藤木",
+  "icon": "🌿",
+  "color": "#d32f2f"
+ },
+ {
+  "id": "lianqiao",
+  "name": "连翘",
+  "role": "灌木或藤木",
+  "icon": "💛",
+  "color": "#ffca28"
+ },
+ {
+  "id": "dingxiang",
+  "name": "丁香",
+  "role": "灌木或藤木",
+  "icon": "💜",
+  "color": "#9c27b0"
+ },
+ {
+  "id": "jinyenvzhen",
+  "name": "金叶女贞",
+  "role": "灌木或藤木",
+  "icon": "🟨",
+  "color": "#cddc39"
+ },
+ {
+  "id": "yingchun",
+  "name": "迎春",
+  "role": "灌木或藤木",
+  "icon": "💛",
+  "color": "#ffeb3b"
+ },
+ {
+  "id": "lingxiao",
+  "name": "凌霄",
+  "role": "灌木或藤木",
+  "icon": "🌼",
+  "color": "#ff7043"
+ },
+ {
+  "id": "jinyinmu",
+  "name": "金银木",
+  "role": "灌木或藤木",
+  "icon": "🌼",
+  "color": "#f9a825"
+ },
+ {
+  "id": "fengweilan",
+  "name": "凤尾兰",
+  "role": "灌木或藤木",
+  "icon": "🌿",
+  "color": "#a5d6a7"
+ },
+ {
+  "id": "other_guan",
+  "name": "其他",
+  "role": "灌木或藤木",
+  "icon": "➕",
+  "color": "#90a4ae",
+  "isOther": true
+ },
+ {
+  "id": "feicai",
+  "name": "费菜",
+  "role": "草本",
+  "icon": "🌼",
+  "color": "#ffd54f"
+ },
+ {
+  "id": "yuzan",
+  "name": "玉簪",
+  "role": "草本",
+  "icon": "🌸",
+  "color": "#b39ddb"
+ },
+ {
+  "id": "yuanwei",
+  "name": "鸢尾",
+  "role": "草本",
+  "icon": "💜",
+  "color": "#7986cb"
+ },
+ {
+  "id": "other_cao",
+  "name": "其他",
+  "role": "草本",
+  "icon": "➕",
+  "color": "#90a4ae",
+  "isOther": true
+ },
+ {
+  "id": "zaoyuanzhu",
+  "name": "早园竹",
+  "role": "竹类",
+  "icon": "🎋",
+  "color": "#00897b"
+ },
+ {
+  "id": "other_zhu",
+  "name": "其他",
+  "role": "竹类",
+  "icon": "➕",
+  "color": "#90a4ae",
+  "isOther": true
  },
  {
   "id": "unknown",
   "name": "暂不确定",
-  "latin": "",
-  "type": "-",
   "role": "待定",
   "icon": "❓",
   "color": "#9e9e9e"

@@ -208,6 +208,11 @@ function addCampus3D(map3) {
     paint: { 'line-color': '#00e5ff', 'line-width': 2.5, 'line-opacity': 0.9 },
   });
 
+  // ---- 建筑名称 / 点位标注 ----
+  // 用 DOM 标记，不用 symbol 文字图层：symbol 需要联网取字体，
+  // 取不到时会把整个数据源的渲染一起卡住（详见 rebuildTreeSource 的注释）。
+  buildLabelMarkers(map3);
+
   // ---- 树木 ----
   // 注意：不要在这里建树源。实测发现，在 map 的 load 事件同一批次里
   // addSource + addLayer，那个源会永久不参与渲染（数据和图层都正常，
@@ -356,6 +361,71 @@ function set3DLayerVisible(switchId, on) {
       map3.setLayoutProperty(lid, 'visibility', on ? 'visible' : 'none');
     }
   }
+  // 名称标记是 DOM 元素，走不到图层的显隐逻辑，单独处理
+  if (switchId === 'ly-labels') {
+    for (const mk of VIEW3D.labelMarkers || []) {
+      mk.getElement().style.display = on ? '' : 'none';
+    }
+  }
+}
+
+/**
+ * 建筑名称和点位标注（三维视图）。
+ *
+ * 用 DOM 标记而不是 symbol 文字图层：symbol 要联网加载字体，
+ * 字体取不到时会把整个数据源的渲染一起卡住（这个坑踩过，很费时间）。
+ * DOM 标记不依赖字体服务，还能直接复用网页的 CSS。
+ */
+function buildLabelMarkers(map3) {
+  if (VIEW3D.labelMarkers && VIEW3D.labelMarkers.length) return;
+  const markers = [];
+
+  const add = (lon, lat, cls, text, tip) => {
+    const el = document.createElement('div');
+    el.className = cls;
+    if (cls === 'poi-label') el.innerHTML = `<span class="poi-dot"></span>${escapeHtml(text)}`;
+    else el.textContent = text;
+    if (tip) el.title = tip;
+    const mk = new maplibregl.Marker({ element: el, anchor: 'center' })
+      .setLngLat([lon, lat])
+      .addTo(map3);
+    markers.push(mk);
+  };
+
+  // 建筑名（放在轮廓中心）
+  for (const f of campusData.features) {
+    const p = f.properties;
+    if (p.kind !== 'building' || !p.name) continue;
+    const [lon, lat] = polygonCenter(f.geometry);
+    if (!lon) continue;
+    const h = p.height_m ? `约 ${p.height_m} 米` : '';
+    add(lon, lat, 'bld-label-3d', p.name.replace('学生公寓', '公寓'), h);
+    // 名称连带高度一起浮在楼上方，用 marker 的 offset 抬高
+    markers[markers.length - 1].setOffset([0, -34]);
+  }
+
+  // 规划图点位（校门等）
+  for (const f of campusData.features) {
+    const p = f.properties;
+    if (p.kind !== 'poi') continue;
+    const [lon, lat] = f.geometry.coordinates;
+    add(lon, lat, 'poi-label', p.name, p.note || '');
+  }
+
+  VIEW3D.labelMarkers = markers;
+  const on = $('ly-labels') ? $('ly-labels').checked : true;
+  if (!on) markers.forEach((mk) => { mk.getElement().style.display = 'none'; });
+}
+
+/** 取多边形几何的中心点（经纬度） */
+function polygonCenter(geom) {
+  let pts = null;
+  if (geom.type === 'Polygon') pts = geom.coordinates[0];
+  else if (geom.type === 'MultiPolygon') pts = geom.coordinates[0][0];
+  if (!pts || !pts.length) return [null, null];
+  let x = 0, y = 0;
+  for (const c of pts) { x += c[0]; y += c[1]; }
+  return [x / pts.length, y / pts.length];
 }
 
 /** 把当前树木数据转成 GeoJSON（三维视图用） */
@@ -369,11 +439,12 @@ function buildTreeFeatureCollection() {
       geometry: { type: 'Point', coordinates: [t.lon, t.lat] },
       properties: {
         id: t.id,
-        name: sp.name,
+        name: speciesLabel(t),
         rawSpecies: t.species,        // 筛选时要用原始 id 判断
         speciesOther: t.speciesOther || '',
         color: sp.color,
-        count: t.count || 1,
+        count: t.several ? 0 : (t.count || 1),   // 「若干」记 0，不参与数量角标
+        several: !!t.several,
         note: t.note || '',
         height: t.height || null,
         dbh: t.dbh || null,
@@ -434,7 +505,7 @@ function bindTreeEvents(map3) {
       .setHTML(
         `<div style="font-family:inherit">
            <div style="font-weight:650;font-size:14px">${escapeHtml(p.name || '树')}${
-             p.count > 1 ? ` ×${p.count}` : ''}</div>
+             p.several ? ' · 若干' : (p.count > 1 ? ` ×${p.count}` : '')}</div>
            ${bits.length ? `<div style="font-size:12px;color:#5a6b55;margin-top:3px">${
              escapeHtml(bits.join(' · '))}</div>` : ''}
          </div>`
@@ -620,9 +691,10 @@ function openFilterPanel() {
   const groups = {};
   for (const t of state.trees) {
     const sp = speciesById(t.species);
-    const nm = t.species === 'unknown' && t.speciesOther ? t.speciesOther : sp.name;
-    if (!groups[nm]) groups[nm] = { name: nm, color: sp.color, count: 0 };
-    groups[nm].count += (t.count || 1);
+    const nm = speciesLabel(t);
+    if (!groups[nm]) groups[nm] = { name: nm, color: sp.color, count: 0, several: 0 };
+    if (t.several) groups[nm].several += 1;
+    else groups[nm].count += (t.count || 1);
   }
   const list = Object.values(groups).sort((a, b) => b.count - a.count);
 
@@ -633,7 +705,7 @@ function openFilterPanel() {
       <input type="checkbox" data-sp="${escapeHtml(g.name)}" ${on ? 'checked' : ''}>
       <span class="fp-dot" style="background:${g.color}"></span>
       <span class="fp-name">${escapeHtml(g.name)}</span>
-      <span class="fp-num">${g.count}</span>
+      <span class="fp-num">${g.count}${g.several ? ` + 若干${g.several}` : ''}</span>
     </label>`;
   }).join('') : '<p class="fp-hint" style="border:none">还没有树木记录</p>';
 

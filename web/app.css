@@ -203,6 +203,36 @@ html, body {
 }
 .bld-label::before { display: none; }
 
+/* 规划图点位标注（校门、独立建筑）——带一个小圆点，
+   便于和建筑名称区分：这些是"图上标了、地图数据里没有轮廓"的位置 */
+.poi-label {
+  display: flex; align-items: center; gap: 4px;
+  background: rgba(255,253,245,.92);
+  border: 1px solid rgba(230,81,0,.45);
+  border-radius: 5px;
+  padding: 1px 6px 1px 4px;
+  font-size: 11px; color: #8a3d00; font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 1px 3px rgba(0,0,0,.16);
+}
+.poi-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #e65100; box-shadow: 0 0 0 1.5px rgba(255,255,255,.9);
+  flex: none;
+}
+
+/* 三维视图里的建筑名。DOM 标记，不用 symbol 文字图层（原因见 view3d.js） */
+.bld-label-3d {
+  background: rgba(255,255,255,.9);
+  border: 1px solid rgba(46,125,50,.4);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 11px; color: #24401f; font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 1px 3px rgba(0,0,0,.2);
+  pointer-events: none;
+}
+
 /* 树木标记 */
 .tree-pin { position: relative; }
 .tree-pin .pin-dot {
@@ -223,6 +253,11 @@ html, body {
   font-size: 10px; font-weight: 700; line-height: 14px;
   text-align: center; padding: 0 3px;
   box-shadow: 0 1px 3px rgba(0,0,0,.25);
+}
+/* 「若干」角标：文字更长，用虚线边框和数字区分 */
+.tree-pin .pin-count.several {
+  border-style: dashed; border-color: #78909c;
+  color: #546e7a; padding: 0 4px; font-size: 9.5px;
 }
 .tree-pin.selected .pin-dot {
   border-color: #ffd54f;
@@ -386,8 +421,8 @@ html, body {
   grid-column: 1 / -1; font-size: 11.5px; font-weight: 650;
   color: var(--ink-2); margin: 7px 0 -1px; letter-spacing: .4px;
 }
-
 /* 数量步进器 */
+.count-row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
 .stepper {
   display: inline-grid; grid-template-columns: 52px 76px 52px;
   align-items: center; border: 1.5px solid var(--line);
@@ -405,6 +440,45 @@ html, body {
   font-size: 21px; color: var(--green); height: 48px; font-family: inherit;
 }
 .stepper .step:hover { background: #e4ebe1; }
+/* 「若干」：数不清时用，和步进器互斥 */
+.chip.several {
+  min-height: 48px; padding: 0 16px; border-radius: 10px;
+  font-size: 14.5px; font-weight: 600;
+}
+.chip.several.active { background: var(--green); border-color: var(--green); color: #fff; }
+.stepper.off { opacity: .4; pointer-events: none; }
+
+/* 树种搜索框 */
+#f-species-search {
+  width: 100%; margin-bottom: 9px; padding: 11px 13px;
+  border: 1.5px solid var(--line); border-radius: 10px;
+  font-size: 14.5px; font-family: inherit; background: #fbfcfa;
+}
+#f-species-search:focus {
+  outline: none; border-color: var(--green-light); background: #fff;
+}
+.sp-group-title {
+  display: flex; align-items: center; justify-content: space-between;
+  cursor: pointer; user-select: none;
+}
+.sp-group-title .sp-caret {
+  font-size: 11px; color: var(--ink-2); transition: transform .15s;
+}
+.sp-group-title .sp-cnt {
+  font-size: 10.5px; font-weight: 500; color: var(--ink-2); opacity: .75;
+}
+/* 折叠用的分组容器：本身不参与布局，让里面的按钮直接吃到父级网格。
+   少了这一行，按钮会挤成一列。 */
+.sp-group { display: contents; }
+/* 「其他」按钮：虚线边框，和名录里的具体树种区分开 */
+.sp-item.sp-other {
+  border-style: dashed; border-color: #b0bec5;
+}
+.sp-item.sp-other.active {
+  border-style: solid; border-color: var(--green);
+}
+.sp-group-title.collapsed .sp-caret { transform: rotate(-90deg); }
+.sp-group.hidden { display: none; }
 
 /* 状态 chips */
 .chips { display: flex; flex-wrap: wrap; gap: 7px; }
@@ -496,6 +570,10 @@ html, body {
 .tree-row .tr-count {
   background: var(--green-pale); color: var(--green);
   font-size: 11px; padding: 1px 7px; border-radius: 8px; font-weight: 650;
+}
+.tree-row .tr-count.several {
+  background: #eceff1; color: #546e7a;
+  border: 1px dashed #b0bec5;
 }
 .tree-row .tr-sub {
   margin: 2px 0 0; font-size: 11.5px; color: var(--ink-2);

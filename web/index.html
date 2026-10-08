@@ -101,6 +101,8 @@
     <!-- 树种 -->
     <div class="field">
       <label>树种 <span class="req">*</span></label>
+      <input id="f-species-search" type="search" placeholder="🔍 输入名字快速找（如：银杏）"
+             autocapitalize="off" autocorrect="off">
       <div class="species-grid" id="species-grid"></div>
       <input id="f-species-other" class="hidden" type="text" placeholder="树种的名称（本地叫法也可以）">
     </div>
@@ -108,12 +110,15 @@
     <!-- 数量 -->
     <div class="field">
       <label>数量</label>
-      <div class="stepper">
-        <button type="button" class="step" data-step="-1">−</button>
-        <input id="f-count" type="number" value="1" min="1" max="999">
-        <button type="button" class="step" data-step="1">＋</button>
+      <div class="count-row">
+        <div class="stepper" id="count-stepper">
+          <button type="button" class="step" data-step="-1">−</button>
+          <input id="f-count" type="number" value="1" min="1" max="999">
+          <button type="button" class="step" data-step="1">＋</button>
+        </div>
+        <button type="button" id="btn-several" class="chip several">若干</button>
       </div>
-      <p class="hint">同一片连续的同种树可以合并记一条，填总棵数</p>
+      <p class="hint" id="count-hint">同一片连续的同种树可以合并记一条，填总棵数</p>
     </div>
 
     <!-- 规格 -->

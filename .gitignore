@@ -22,3 +22,10 @@
 .vscode/
 .idea/
 *.swp
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 用户上传的原始文件（已归档到 data/raw/）
+/uploads/

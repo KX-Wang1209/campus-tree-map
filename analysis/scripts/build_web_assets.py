@@ -82,6 +82,78 @@ def build_tiles() -> dict:
     return meta
 
 
+# --------------------------------------------------------------------
+# 建筑名称：来源是学校提供的规划鸟瞰效果图（图上用红字标注）。
+# 效果图是透视图，先把图上的红字位置提取出来，再用单应变换配准到真实
+# 经纬度（配准残差 0.7～38 px，约合 0.3～18 m），然后取最近的 OSM 建筑。
+# 只保留距离足够近、且用途对得上的；配不准的不硬套。
+# --------------------------------------------------------------------
+NAME_MAP = {
+    "way/1497712899": "学生活动中心",
+    "way/1497712900": "二食堂",
+    "way/1497712902": "一食堂",
+    "way/1497712918": "艺术系",
+    "way/1497708670": "国语系",
+    "way/1497712911": "行政楼",
+    "way/1497708671": "商务系",
+    "way/1497708669": "主教学楼",
+    "way/1497708672": "图书馆",
+    "way/1497758057": "一报",
+    "way/1497712894": "实训基地",
+}
+
+# 效果图上标了、但 OSM 里没有对应建筑轮廓的点位（按配准结果落位）。
+# 主要是一些独立构筑物和校门，以及 2025-05 影像上还没建成、OSM 未收录的楼。
+POIS = [
+    {"name": "医务室", "lon": 117.63645, "lat": 39.06980,
+     "note": "规划图标注，OSM 无对应轮廓"},
+    {"name": "北门",   "lon": 117.63930, "lat": 39.07015, "note": "校园北侧校门"},
+    {"name": "南门",   "lon": 117.63890, "lat": 39.06495, "note": "校园南侧校门"},
+    {"name": "东门",   "lon": 117.64203, "lat": 39.06630, "note": "校园东侧校门"},
+    {"name": "长河楼", "lon": 117.64153, "lat": 39.06760,
+     "note": "湖边弧形建筑，OSM 未收录"},
+    {"name": "二报",   "lon": 117.64180, "lat": 39.06700,
+     "note": "第二报告厅；2025-05 影像上尚未建成，位置据规划图推算"},
+]
+
+# 南侧那栋 220 米长的楼，规划图上分属两个系：西边物流系、东边经管系。
+# OSM 里是一个整体多边形，所以按经度切成两段分别命名。
+SPLIT_BY_LON = {
+    "way/1497712889": (117.63910, "物流系", "经管系"),
+}
+
+
+def _cut_x(a, b, xc):
+    """线段 a→b 与竖直线 x=xc 的交点。"""
+    if b[0] == a[0]:
+        return [xc, a[1]]
+    t = (xc - a[0]) / (b[0] - a[0])
+    return [xc, a[1] + t * (b[1] - a[1])]
+
+
+def clip_vertical(pts, xc, keep_west):
+    """把多边形按竖直线裁成两半（Sutherland–Hodgman）。
+
+    只用于南侧那栋长楼的拆分 —— 它是个接近矩形的长条，
+    这个算法足够；形状复杂的多边形会有细缝，所以没做成通用工具。
+    """
+    out = []
+    n = len(pts)
+    for i in range(n):
+        cur, prv = pts[i], pts[i - 1]
+        cin = cur[0] <= xc if keep_west else cur[0] >= xc
+        pin = prv[0] <= xc if keep_west else prv[0] >= xc
+        if cin:
+            if not pin:
+                out.append(_cut_x(prv, cur, xc))
+            out.append(cur)
+        elif pin:
+            out.append(_cut_x(prv, cur, xc))
+    if len(out) >= 3 and out[0] != out[-1]:
+        out.append(out[0])            # 闭合
+    return out
+
+
 def build_campus_geojson() -> dict:
     """校园要素转成网页用的精简 GeoJSON。"""
     src = json.loads((RAW / "campus_osm_features.geojson").read_text(encoding="utf-8"))
@@ -106,12 +178,47 @@ def build_campus_geojson() -> dict:
             "sub": cat.split(":", 1)[1] if ":" in cat else "",
             "name": p.get("name", ""),
         }
+        # OSM 自带的名称优先，没有的用规划图读出来的
+        if not props["name"]:
+            props["name"] = NAME_MAP.get(p.get("osm_id", ""), "")
+            if props["name"]:
+                props["name_src"] = "plan"     # 来自学校规划效果图
         if kind == "building":
             h = hmap.get(p["osm_id"], {})
             props["levels"] = h.get("levels", 0)
             props["height_m"] = h.get("height_m", 0)
             props["height_basis"] = h.get("height_basis", "")
+
+        # 南侧那栋 220 米长楼：规划图上西边是物流系、东边是经管系。
+        # OSM 只给了整体轮廓，所以按经度切成两段，各自挂名字。
+        oid = p.get("osm_id", "")
+        if oid in SPLIT_BY_LON and ft["geometry"]["type"] == "Polygon":
+            xc, west_name, east_name = SPLIT_BY_LON[oid]
+            ring = ft["geometry"]["coordinates"][0]
+            for keep_west, nm in ((True, west_name), (False, east_name)):
+                part = clip_vertical(ring, xc, keep_west)
+                if len(part) < 4:
+                    continue
+                p2 = dict(props)
+                p2["name"] = nm
+                p2["name_src"] = "plan"
+                feats.append({
+                    "type": "Feature",
+                    "geometry": {"type": "Polygon", "coordinates": [part]},
+                    "properties": p2,
+                })
+            continue
+
         feats.append({"type": "Feature", "geometry": ft["geometry"], "properties": props})
+
+    # 规划图上有、但 OSM 没有轮廓的点位（校门、独立建筑）
+    for poi in POIS:
+        feats.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [poi["lon"], poi["lat"]]},
+            "properties": {"kind": "poi", "sub": "", "name": poi["name"],
+                           "note": poi.get("note", ""), "name_src": "plan"},
+        })
 
     return {
         "type": "FeatureCollection",
@@ -120,46 +227,85 @@ def build_campus_geojson() -> dict:
     }
 
 
-# 天津市城市管理委员会《天津市适宜园林树木栽植导则》推荐行道树/庭荫树，
-# 加上校园常见的绿篱、花灌木。这是本地真实物种，供学生实地对照选择。
+# 树种库：按学校《校园植物名录（26年10月）》整理。
+# 四类共 65 种（乔木 37、灌木藤木 24、草本 3、竹类 1），
+# 每类末尾加一个「其他」，用于补录名录之外的树种。
 SPECIES = [
-    # --- 行道树（TJ 导则首选） ---
-    {"id": "baifa",     "name": "白蜡",       "latin": "Fraxinus chinensis",  "type": "落叶乔木", "role": "行道树", "icon": "🌳", "color": "#7cb342"},
-    {"id": "guohuai",   "name": "国槐",       "latin": "Sophora japonica",    "type": "落叶乔木", "role": "行道树", "icon": "🌳", "color": "#558b2f"},
-    {"id": "futong",    "name": "法桐",       "latin": "Platanus orientalis", "type": "落叶乔木", "role": "行道树", "icon": "🌳", "color": "#8bc34a"},
-    {"id": "luan",      "name": "栾树",       "latin": "Koelreuteria",        "type": "落叶乔木", "role": "行道树", "icon": "🌳", "color": "#9ccc65"},
-    {"id": "maobaiyang","name": "毛白杨",     "latin": "Populus tomentosa",   "type": "落叶乔木", "role": "行道树", "icon": "🌳", "color": "#689f38"},
-    {"id": "chouchun",  "name": "臭椿",       "latin": "Ailanthus altissima", "type": "落叶乔木", "role": "行道树", "icon": "🌳", "color": "#7cb342"},
-    {"id": "qiantouchun","name": "千头椿",    "latin": "Ailanthus altissima 'Qiantou'", "type": "落叶乔木", "role": "行道树", "icon": "🌳", "color": "#827717"},
-    {"id": "cihuai",    "name": "刺槐",       "latin": "Robinia pseudoacacia","type": "落叶乔木", "role": "行道树", "icon": "🌳", "color": "#558b2f"},
-    # --- 庭荫树 ---
-    {"id": "yinxing",   "name": "银杏",       "latin": "Ginkgo biloba",       "type": "落叶乔木", "role": "庭荫树", "icon": "🍂", "color": "#fdd835"},
-    {"id": "paotong",   "name": "泡桐",       "latin": "Paulownia",           "type": "落叶乔木", "role": "庭荫树", "icon": "💜", "color": "#ab47bc"},
-    {"id": "qingtong",  "name": "青桐",       "latin": "Firmiana simplex",    "type": "落叶乔木", "role": "庭荫树", "icon": "🌳", "color": "#66bb6a"},
-    {"id": "hehuan",    "name": "合欢",       "latin": "Albizia julibrissin", "type": "落叶乔木", "role": "庭荫树", "icon": "🌸", "color": "#f48fb1"},
-    {"id": "yushu",     "name": "榆树",       "latin": "Ulmus pumila",        "type": "落叶乔木", "role": "庭荫树", "icon": "🌳", "color": "#795548"},
-    {"id": "zhuang",    "name": "皂角",       "latin": "Gleditsia sinensis",  "type": "落叶乔木", "role": "庭荫树", "icon": "🌳", "color": "#6d4c41"},
-    {"id": "goushu",    "name": "构树",       "latin": "Broussonetia",        "type": "落叶乔木", "role": "庭荫树", "icon": "🌳", "color": "#8d6e63"},
-    {"id": "sang",      "name": "桑树",       "latin": "Morus alba",          "type": "落叶乔木", "role": "庭荫树", "icon": "🍇", "color": "#7e57c2"},
-    {"id": "huangjinshu","name": "黄金树",    "latin": "Catalpa speciosa",    "type": "落叶乔木", "role": "庭荫树", "icon": "🌳", "color": "#fbc02d"},
-    # --- 常绿 / 针叶 ---
-    {"id": "kuai",      "name": "桧柏",       "latin": "Juniperus chinensis","type": "常绿乔木", "role": "常绿",   "icon": "🌲", "color": "#2e7d32"},
-    {"id": "you",       "name": "油松",       "latin": "Pinus tabuliformis",  "type": "常绿乔木", "role": "常绿",   "icon": "🌲", "color": "#1b5e20"},
-    {"id": "bai",       "name": "侧柏",       "latin": "Platycladus orientalis","type": "常绿乔木","role": "常绿",  "icon": "🌲", "color": "#33691e"},
-    {"id": "xue",       "name": "雪松",       "latin": "Cedrus deodara",      "type": "常绿乔木", "role": "常绿",   "icon": "🌲", "color": "#004d40"},
-    # --- 观花 / 小乔木 ---
-    {"id": "zijing",    "name": "紫荆",       "latin": "Cercis chinensis",    "type": "小乔木",   "role": "观花",   "icon": "🌸", "color": "#ec407a"},
-    {"id": "zwei",      "name": "紫薇",       "latin": "Lagerstroemia indica","type": "小乔木",   "role": "观花",   "icon": "🌸", "color": "#e91e63"},
-    {"id": "congzhi",   "name": "丛生紫叶李", "latin": "Prunus cerasifera",   "type": "小乔木",   "role": "观花",   "icon": "🌸", "color": "#d81b60"},
-    {"id": "tao",       "name": "碧桃",       "latin": "Prunus persica",      "type": "小乔木",   "role": "观花",   "icon": "🌸", "color": "#ff80ab"},
-    {"id": "dingxiang", "name": "丁香",       "latin": "Syringa",             "type": "灌木",     "role": "观花",   "icon": "💜", "color": "#9c27b0"},
-    {"id": "lianshu",   "name": "连翘",       "latin": "Forsythia suspensa",  "type": "灌木",     "role": "观花",   "icon": "💛", "color": "#ffca28"},
-    # --- 绿篱 ---
-    {"id": "huangyang", "name": "大叶黄杨",   "latin": "Euonymus japonicus",  "type": "常绿灌木", "role": "绿篱",   "icon": "🟩", "color": "#00c853"},
-    {"id": "nvzhen",    "name": "女贞",       "latin": "Ligustrum lucidum",   "type": "灌木",     "role": "绿篱",   "icon": "🟩", "color": "#64dd17"},
-    {"id": "yueji",     "name": "月季",       "latin": "Rosa chinensis",      "type": "灌木",     "role": "观花",   "icon": "🌹", "color": "#f44336"},
-    # --- 兜底 ---
-    {"id": "unknown",   "name": "暂不确定",   "latin": "",                    "type": "-",        "role": "待定",   "icon": "❓", "color": "#9e9e9e"},
+    # ============ 乔木（37 种） ============
+    {"id": "yinxing", "name": "银杏", "role": "乔木", "icon": "🍂", "color": "#fdd835"},
+    {"id": "yuanbai", "name": "圆柏", "role": "乔木", "icon": "🌲", "color": "#2e7d32"},
+    {"id": "maobaiyang", "name": "毛白杨", "role": "乔木", "icon": "🌳", "color": "#558b2f"},
+    {"id": "liushu", "name": "柳树", "role": "乔木", "icon": "🌳", "color": "#7cb342"},
+    {"id": "hetao", "name": "核桃", "role": "乔木", "icon": "🌰", "color": "#6d4c41"},
+    {"id": "yushu", "name": "榆树", "role": "乔木", "icon": "🌳", "color": "#795548"},
+    {"id": "yulan", "name": "玉兰", "role": "乔木", "icon": "🌸", "color": "#f48fb1"},
+    {"id": "xuanlingmu", "name": "悬铃木", "role": "乔木", "icon": "🌳", "color": "#8bc34a"},
+    {"id": "pingguo", "name": "苹果", "role": "乔木", "icon": "🍎", "color": "#ef5350"},
+    {"id": "xifuhaitang", "name": "西府海棠", "role": "乔木", "icon": "🌸", "color": "#ec407a"},
+    {"id": "chuisihaitang", "name": "垂丝海棠", "role": "乔木", "icon": "🌸", "color": "#f06292"},
+    {"id": "hongbaoshi", "name": "红宝石海棠", "role": "乔木", "icon": "🌸", "color": "#d81b60"},
+    {"id": "shanzha", "name": "山楂", "role": "乔木", "icon": "🌳", "color": "#c62828"},
+    {"id": "lishu", "name": "梨树", "role": "乔木", "icon": "🍐", "color": "#aed581"},
+    {"id": "lishu2", "name": "李树", "role": "乔木", "icon": "🌳", "color": "#9ccc65"},
+    {"id": "ziyeli", "name": "紫叶李", "role": "乔木", "icon": "🍂", "color": "#7b1fa2"},
+    {"id": "ribenwanying", "name": "日本晚樱", "role": "乔木", "icon": "🌸", "color": "#f8bbd0"},
+    {"id": "shantao", "name": "山桃", "role": "乔木", "icon": "🌸", "color": "#f48fb1"},
+    {"id": "maotao", "name": "毛桃", "role": "乔木", "icon": "🍑", "color": "#ffb74d"},
+    {"id": "bitao", "name": "碧桃", "role": "乔木", "icon": "🌸", "color": "#ff80ab"},
+    {"id": "yingtao", "name": "樱桃", "role": "乔木", "icon": "🍒", "color": "#e53935"},
+    {"id": "xingshu", "name": "杏树", "role": "乔木", "icon": "🌸", "color": "#ffb300"},
+    {"id": "hehuan", "name": "合欢", "role": "乔木", "icon": "🌸", "color": "#f06292"},
+    {"id": "cihuai", "name": "刺槐", "role": "乔木", "icon": "🌳", "color": "#689f38"},
+    {"id": "guohuai", "name": "国槐", "role": "乔木", "icon": "🌳", "color": "#33691e"},
+    {"id": "longzhuai", "name": "龙爪槐", "role": "乔木", "icon": "🌳", "color": "#558b2f"},
+    {"id": "wuyehuai", "name": "五叶槐", "role": "乔木", "icon": "🌳", "color": "#7cb342"},
+    {"id": "chouchun", "name": "臭椿", "role": "乔木", "icon": "🌳", "color": "#827717"},
+    {"id": "xiangchun", "name": "香椿", "role": "乔木", "icon": "🌿", "color": "#afb42b"},
+    {"id": "huojushu", "name": "火炬树", "role": "乔木", "icon": "🍂", "color": "#bf360c"},
+    {"id": "huanglu", "name": "黄栌", "role": "乔木", "icon": "🍂", "color": "#8d6e63"},
+    {"id": "yuanbaofeng", "name": "元宝枫", "role": "乔木", "icon": "🍁", "color": "#d84315"},
+    {"id": "luanshu", "name": "栾树", "role": "乔木", "icon": "🌳", "color": "#cddc39"},
+    {"id": "zaoshu", "name": "枣树", "role": "乔木", "icon": "🌳", "color": "#a1887f"},
+    {"id": "shishu", "name": "柿树", "role": "乔木", "icon": "🍊", "color": "#ff7043"},
+    {"id": "baila", "name": "白蜡", "role": "乔木", "icon": "🌳", "color": "#43a047"},
+    {"id": "maopaotong", "name": "毛泡桐", "role": "乔木", "icon": "💜", "color": "#ab47bc"},
+    {"id": "other_qiao", "name": "其他", "role": "乔木", "icon": "➕", "color": "#90a4ae", "isOther": True},
+    # ============ 灌木 / 藤木（24 种） ============
+    {"id": "xiaolongbai", "name": "小龙柏", "role": "灌木或藤木", "icon": "🌲", "color": "#1b5e20"},
+    {"id": "qiangwei", "name": "蔷薇", "role": "灌木或藤木", "icon": "🌹", "color": "#f06292"},
+    {"id": "yueji", "name": "月季", "role": "灌木或藤木", "icon": "🌹", "color": "#e91e63"},
+    {"id": "huangcimei", "name": "黄刺玫", "role": "灌木或藤木", "icon": "🌼", "color": "#fdd835"},
+    {"id": "yuyemei", "name": "榆叶梅", "role": "灌木或藤木", "icon": "🌸", "color": "#ec407a"},
+    {"id": "zhenzhumei", "name": "珍珠梅", "role": "灌木或藤木", "icon": "🌸", "color": "#cfd8dc"},
+    {"id": "ziteng", "name": "紫藤", "role": "灌木或藤木", "icon": "💜", "color": "#7e57c2"},
+    {"id": "zisuihuai", "name": "紫穗槐", "role": "灌木或藤木", "icon": "🌿", "color": "#5e35b1"},
+    {"id": "huajiao", "name": "花椒", "role": "灌木或藤木", "icon": "🌿", "color": "#8d6e63"},
+    {"id": "xiaoyehuangyang", "name": "小叶黄杨", "role": "灌木或藤木", "icon": "🟩", "color": "#00c853"},
+    {"id": "dayehuangyang", "name": "大叶黄杨", "role": "灌木或藤木", "icon": "🟩", "color": "#64dd17"},
+    {"id": "wuyedijin", "name": "五叶地锦", "role": "灌木或藤木", "icon": "🍁", "color": "#c62828"},
+    {"id": "mujin", "name": "木槿", "role": "灌木或藤木", "icon": "🌺", "color": "#ab47bc"},
+    {"id": "chengliu", "name": "柽柳", "role": "灌木或藤木", "icon": "🌸", "color": "#f48fb1"},
+    {"id": "ziwei", "name": "紫薇", "role": "灌木或藤木", "icon": "🌸", "color": "#e91e63"},
+    {"id": "shiliu", "name": "石榴", "role": "灌木或藤木", "icon": "🌺", "color": "#ff5722"},
+    {"id": "hongruimu", "name": "红瑞木", "role": "灌木或藤木", "icon": "🌿", "color": "#d32f2f"},
+    {"id": "lianqiao", "name": "连翘", "role": "灌木或藤木", "icon": "💛", "color": "#ffca28"},
+    {"id": "dingxiang", "name": "丁香", "role": "灌木或藤木", "icon": "💜", "color": "#9c27b0"},
+    {"id": "jinyenvzhen", "name": "金叶女贞", "role": "灌木或藤木", "icon": "🟨", "color": "#cddc39"},
+    {"id": "yingchun", "name": "迎春", "role": "灌木或藤木", "icon": "💛", "color": "#ffeb3b"},
+    {"id": "lingxiao", "name": "凌霄", "role": "灌木或藤木", "icon": "🌼", "color": "#ff7043"},
+    {"id": "jinyinmu", "name": "金银木", "role": "灌木或藤木", "icon": "🌼", "color": "#f9a825"},
+    {"id": "fengweilan", "name": "凤尾兰", "role": "灌木或藤木", "icon": "🌿", "color": "#a5d6a7"},
+    {"id": "other_guan", "name": "其他", "role": "灌木或藤木", "icon": "➕", "color": "#90a4ae", "isOther": True},
+    # ============ 草本（3 种） ============
+    {"id": "feicai", "name": "费菜", "role": "草本", "icon": "🌼", "color": "#ffd54f"},
+    {"id": "yuzan", "name": "玉簪", "role": "草本", "icon": "🌸", "color": "#b39ddb"},
+    {"id": "yuanwei", "name": "鸢尾", "role": "草本", "icon": "💜", "color": "#7986cb"},
+    {"id": "other_cao", "name": "其他", "role": "草本", "icon": "➕", "color": "#90a4ae", "isOther": True},
+    # ============ 竹类（1 种） ============
+    {"id": "zaoyuanzhu", "name": "早园竹", "role": "竹类", "icon": "🎋", "color": "#00897b"},
+    {"id": "other_zhu", "name": "其他", "role": "竹类", "icon": "➕", "color": "#90a4ae", "isOther": True},
+    # ============ 兜底 ============
+    {"id": "unknown", "name": "暂不确定", "role": "待定", "icon": "❓", "color": "#9e9e9e"},
 ]
 
 

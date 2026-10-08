@@ -18,6 +18,9 @@ const state = {
   pendingPhotos: [],  // 正在编辑的照片 dataURL 列表
   pickingSpecies: null,
   pickingHealth: '良好',
+  pickingSeveral: false,   // 数量选「若干」
+  spSearch: '',            // 树种搜索词
+  spCollapsed: new Set(['灌木或藤木', '草本', '竹类']),  // 默认折起的组
   choosingOnMap: false,
   sort: 'time',
   search: '',
@@ -42,7 +45,7 @@ const collab = {
 // 打包版启动时没有命令行窗口，用这个把"发给学生的地址"显示在页面上
 const serverInfo = { lan: null, dataDir: null };
 
-let map, campusLayer, boundaryLayer, treeLayer, labelLayer, photoLayer, meMarker;
+let map, campusLayer, boundaryLayer, treeLayer, labelLayer, poiLayer, photoLayer, meMarker;
 let campusData = null;
 
 /* ---------------------------------------------------------------
@@ -300,7 +303,7 @@ async function initMap() {
 
 /* 底图图层：建筑、道路、运动场地、水体、边界、名称 */
 function buildBaseLayers() {
-  const bld = [], roads = [], sports = [], water = [], labels = [];
+  const bld = [], roads = [], sports = [], water = [], labels = [], pois = [];
 
   for (const ft of campusData.features) {
     const p = ft.properties, g = ft.geometry;
@@ -309,6 +312,7 @@ function buildBaseLayers() {
     else if (p.kind === 'leisure') {
       if (p.sub === 'pitch' || p.sub === 'track' || p.sub === 'bleachers') sports.push(ft);
     } else if (p.kind === 'natural' && p.sub === 'water') water.push(ft);
+    else if (p.kind === 'poi') pois.push(ft);
 
     if (p.kind === 'building' && p.name) labels.push(ft);
   }
@@ -344,6 +348,26 @@ function buildBaseLayers() {
     style: { color: '#00e5ff', weight: 2.6, fill: false, opacity: 0.9 },
   }).addTo(map);
 
+  // 规划图上的点位标注（校门、独立建筑）。
+  // 用单个定位点显示，比 Polygon 上的文字更灵活，也不会和楼名挤在一起。
+  poiLayer = L.layerGroup();
+  for (const ft of pois) {
+    const [lon, lat] = ft.geometry.coordinates;
+    const p = ft.properties;
+    L.marker([lat, lon], {
+      icon: L.divIcon({
+        className: 'poi-label',
+        html: `<span class="poi-dot"></span>${escapeHtml(p.name)}`,
+        iconSize: [0, 0], iconAnchor: [0, 0],
+      }),
+      interactive: !!p.note,
+    }).bindTooltip(
+      p.note ? `<b>${escapeHtml(p.name)}</b><br><span style="font-size:11px;opacity:.75">${escapeHtml(p.note)}</span>` : escapeHtml(p.name),
+      { sticky: true },
+    ).addTo(poiLayer);
+  }
+  poiLayer.addTo(map);
+
   labelLayer = L.layerGroup();
   for (const ft of labels) {
     const c = polygonCentroid(ft.geometry);
@@ -361,7 +385,7 @@ function buildBaseLayers() {
   // 保存引用以便图层开关
   window._baseLayers = {
     buildings: buildingLayer, roads: roadLayer,
-    sports: sportLayer, water: waterLayer,
+    sports: sportLayer, water: waterLayer, pois: poiLayer, labels: labelLayer,
   };
 }
 
@@ -383,6 +407,28 @@ function speciesById(id) {
          { name: '未记录', icon: '🌳', color: '#9e9e9e', id: 'unknown' };
 }
 
+/** 记录的显示名：选了「其他」或「暂不确定」时，用填进去的名称 */
+function speciesLabel(t) {
+  const sp = speciesById(t.species);
+  if (t.speciesOther && (t.species === 'unknown' || sp.isOther)) return t.speciesOther;
+  return sp.name;
+}
+
+/** 数量：数不清时显示「若干」，否则显示具体数 */
+function countText(t) {
+  return t.several ? '若干' : String(t.count || 1);
+}
+
+/** 统计总数时，只能把确定的数字加起来，「若干」单独说明 */
+function sumCounts(list) {
+  return list.reduce((s, t) => s + (t.several ? 0 : (t.count || 1)), 0);
+}
+
+function severalNote(list) {
+  const n = list.filter((t) => t.several).length;
+  return n ? `（另有 ${n} 处若干）` : '';
+}
+
 function renderTrees() {
   treeLayer.clearLayers();
   photoLayer.clearLayers();
@@ -391,18 +437,22 @@ function renderTrees() {
 
   for (const t of state.trees) {
     const sp = speciesById(t.species);
+    const badge = t.several
+      ? '<div class="pin-count several">若干</div>'
+      : (t.count > 1 ? `<div class="pin-count">${t.count}</div>` : '');
     const pin = L.marker([t.lat, t.lon], {
       icon: L.divIcon({
         className: 'tree-pin' + (t.id === state.selectedId ? ' selected' : ''),
         html: `<div class="pin-dot" style="background:${sp.color}">
                  <span>${sp.icon}</span>
-               </div>${t.count > 1 ? `<div class="pin-count">${t.count}</div>` : ''}`,
+               </div>${badge}`,
         iconSize: [26, 26], iconAnchor: [13, 26],
       }),
       riseOnHover: true,
     });
     pin.bindTooltip(
-      `<b>${escapeHtml(sp.name)}</b>${t.count > 1 ? ` × ${t.count}` : ''}` +
+      `<b>${escapeHtml(speciesLabel(t))}</b>${
+        t.several ? ' · 若干' : (t.count > 1 ? ` × ${t.count}` : '')}` +
       (t.note ? `<br><span style="font-size:11px">${escapeHtml(t.note)}</span>` : ''),
       { direction: 'top', offset: [0, -24] }
     );
@@ -431,11 +481,12 @@ function renderTrees() {
 }
 
 function updateModeBar() {
-  const total = state.trees.reduce((s, t) => s + (t.count || 1), 0);
+  const total = sumCounts(state.trees);
+  const sv = severalNote(state.trees);
   if (collab.enabled) {
     const who = collab.online > 1 ? ` · ${collab.online} 人在线` : '';
     const stat = state.trees.length
-      ? `已记 ${state.trees.length} 条 / 共 ${total} 棵`
+      ? `已记 ${state.trees.length} 条 / 共 ${total} 棵${sv}`
       : '点地图添加第一棵树';
     // 局域网地址一直显示，老师任何时候都能看到该发什么给学生
     const share = serverInfo.lan
@@ -494,12 +545,16 @@ function openSheet(lat, lon, id) {
   state.pendingPhotos = [...(state.draft.photos || [])];
   state.pickingSpecies = state.draft.species;
   state.pickingHealth = state.draft.health || '良好';
+  state.pickingSeveral = !!state.draft.several;
+  state.spSearch = '';
+  if ($('f-species-search')) $('f-species-search').value = '';
 
   $('sheet-title').textContent = existing ? '编辑这棵树' : '添加一棵树';
   $('btn-delete').classList.toggle('hidden', !existing);
   $('f-lat').value = lat.toFixed(6);
   $('f-lon').value = lon.toFixed(6);
   $('f-count').value = state.draft.count || 1;
+  $('f-species-other').value = state.draft.speciesOther || '';
   $('f-height').value = state.draft.height ?? '';
   $('f-dbh').value = state.draft.dbh ?? '';
   $('f-note').value = state.draft.note || '';
@@ -508,6 +563,7 @@ function openSheet(lat, lon, id) {
   renderSpeciesGrid();
   renderHealthChips();
   renderPhotoPreview();
+  renderCountUI();
   updateLocHint();
 
   $('sheet-mask').classList.remove('hidden');
@@ -539,31 +595,64 @@ function updateLocHint() {
 }
 
 /* 树种网格：按用途分组 */
+/* 树种网格：按植物名录分四大类，每类可折叠，带搜索 */
+const SPECIES_ORDER = ['乔木', '灌木或藤木', '草本', '竹类', '待定'];
+
 function renderSpeciesGrid() {
   const grid = $('species-grid');
-  const groups = {};
+
+  // 按固定顺序分组（名录的顺序，不靠对象键序）
+  const groups = new Map();
+  for (const role of SPECIES_ORDER) groups.set(role, []);
   for (const sp of state.species) {
-    (groups[sp.role] = groups[sp.role] || []).push(sp);
+    if (!groups.has(sp.role)) groups.set(sp.role, []);
+    groups.get(sp.role).push(sp);
   }
+
+  const q = (state.spSearch || '').trim().toLowerCase();
   let html = '';
-  for (const [role, list] of Object.entries(groups)) {
-    html += `<div class="sp-group-title">${escapeHtml(role)}</div>`;
-    for (const sp of list) {
-      html += `<button type="button" class="sp-item${state.pickingSpecies === sp.id ? ' active' : ''}"
+  for (const [role, list] of groups) {
+    if (!list.length) continue;
+    // 搜索时忽略折叠，直接展开命中的组
+    const hit = q ? list.filter((sp) => sp.name.toLowerCase().includes(q)) : list;
+    if (q && !hit.length) continue;
+
+    const isCollapsed = !q && state.spCollapsed.has(role);
+    html += `<div class="sp-group-title${isCollapsed ? ' collapsed' : ''}" data-role="${escapeHtml(role)}">
+      <span>${escapeHtml(role)} <span class="sp-cnt">${list.length}</span></span>
+      <span class="sp-caret">▼</span></div>`;
+    html += `<div class="sp-group${isCollapsed ? ' hidden' : ''}" data-group="${escapeHtml(role)}">`;
+    for (const sp of hit) {
+      const extra = sp.isOther ? ' sp-other' : '';
+      html += `<button type="button" class="sp-item${state.pickingSpecies === sp.id ? ' active' : ''}${extra}"
                  data-sp="${sp.id}">
                  <span class="sp-icon">${sp.icon}</span>
                  <span class="sp-name">${escapeHtml(sp.name)}</span>
                </button>`;
     }
+    html += `</div>`;
   }
   grid.innerHTML = html;
+
+  grid.querySelectorAll('.sp-group-title').forEach((el) => {
+    el.addEventListener('click', () => {
+      const role = el.dataset.role;
+      if (state.spCollapsed.has(role)) state.spCollapsed.delete(role);
+      else state.spCollapsed.add(role);
+      renderSpeciesGrid();
+    });
+  });
   grid.querySelectorAll('.sp-item').forEach((el) => {
     el.addEventListener('click', () => {
       state.pickingSpecies = el.dataset.sp;
       renderSpeciesGrid();
     });
   });
-  $('f-species-other').classList.toggle('hidden', state.pickingSpecies !== 'unknown');
+
+  // 「其他」和「暂不确定」都要填名称
+  const sp = state.species.find((s) => s.id === state.pickingSpecies);
+  const needText = state.pickingSpecies === 'unknown' || (sp && sp.isOther);
+  $('f-species-other').classList.toggle('hidden', !needText);
 }
 
 function renderHealthChips() {
@@ -577,6 +666,16 @@ function renderHealthChips() {
       renderHealthChips();
     });
   });
+}
+
+/** 数量控件：「若干」和数字互斥 */
+function renderCountUI() {
+  const on = state.pickingSeveral;
+  $('count-stepper').classList.toggle('off', on);
+  $('btn-several').classList.toggle('active', on);
+  $('count-hint').textContent = on
+    ? '记作「若干」—— 统计时不并进具体棵数，只标注这一片数量不清'
+    : '同一片连续的同种树可以合并记一条，填总棵数';
 }
 
 function renderPhotoPreview() {
@@ -642,12 +741,19 @@ function saveSheet() {
   const dbh = parseFloat($('f-dbh').value);
   const other = $('f-species-other').value.trim();
   const recorder = $('f-recorder').value.trim();
+  const spPick = state.species.find((s) => s.id === state.pickingSpecies);
+  const needText = state.pickingSpecies === 'unknown' || (spPick && spPick.isOther);
+  if (needText && !other) {
+    toast('请填写树种名称（选了「其他」就要写清是什么）', true);
+    return;
+  }
 
   const rec = {
     id: state.draft.id,
     lat, lon,
     species: state.pickingSpecies,
-    speciesOther: state.pickingSpecies === 'unknown' ? other : '',
+    speciesOther: needText ? other : '',
+    several: state.pickingSeveral,     // true = 数量记作「若干」
     count,
     height: isNaN(height) ? null : height,
     dbh: isNaN(dbh) ? null : dbh,
@@ -728,7 +834,12 @@ function findTwin(rec, pool) {
 
 /** 把 inc 的信息并进 base（同一棵树，取更全的信息） */
 function mergeInto(base, inc) {
-  base.count = Math.max(base.count || 1, inc.count || 1);
+  // 数量：只要有一边是「若干」，结果就是「若干」（知道数的那边不会更少）
+  if (base.several || inc.several) {
+    base.several = true;
+  } else {
+    base.count = Math.max(base.count || 1, inc.count || 1);
+  }
   if (base.height == null) base.height = inc.height ?? null;
   if (base.dbh == null) base.dbh = inc.dbh ?? null;
   base.photos = [...new Set([...(base.photos || []), ...(inc.photos || [])])].slice(0, 3);
@@ -737,16 +848,17 @@ function mergeInto(base, inc) {
   }
   const names = [...new Set([base.recorder, inc.recorder].filter(Boolean))];
   if (names.length) base.recorder = names.join('+');
+  // 树种名称：一边空着就补上（比如 A 只写了「其他」，B 写了具体名）
+  if (!base.speciesOther && inc.speciesOther) base.speciesOther = inc.speciesOther;
   base.updated = Date.now();
 }
 
 function treeLabel(t) {
   const sp = speciesById(t.species);
-  const nm = t.species === 'unknown' && t.speciesOther ? t.speciesOther : sp.name;
-  const bits = [`×${t.count || 1}`];
+  const bits = [countText(t) === '若干' ? '若干' : `×${t.count || 1}`];
   if (t.height) bits.push(`高${t.height}m`);
   if (t.dbh) bits.push(`胸径${t.dbh}cm`);
-  return { icon: sp.icon, color: sp.color, name: nm, meta: bits.join(' · ') };
+  return { icon: sp.icon, color: sp.color, name: speciesLabel(t), meta: bits.join(' · ') };
 }
 
 /* ---------------------------------------------------------------
@@ -799,14 +911,17 @@ function parseCSVtoTrees(text) {
     if (isNaN(lat) || isNaN(lon)) continue;
 
     const spName = cell(r, '树种');
-    const sp = state.species.find((s) => s.name === spName);
-    const cnt = parseInt(cell(r, '数量'), 10);
+    const sp = state.species.find((s) => s.name === spName || s.id === spName);
+    const cntRaw = cell(r, '数量');
+    const several = /若干|数不清|many/i.test(cntRaw);
+    const cnt = parseInt(cntRaw, 10);
     out.push({
       id: cell(r, '记录ID') || uid(),
       lat, lon,
       species: sp ? sp.id : 'unknown',
       speciesOther: sp ? '' : spName,
-      count: isNaN(cnt) ? 1 : Math.max(1, cnt),
+      several,
+      count: several ? 1 : (isNaN(cnt) ? 1 : Math.max(1, cnt)),
       height: num(cell(r, '树高(m)')),
       dbh: num(cell(r, '胸径(cm)')),
       health: cell(r, '生长状况') || '良好',
@@ -1000,7 +1115,6 @@ function renderList() {
 
   body.innerHTML = rows.map((t) => {
     const sp = speciesById(t.species);
-    const nm = t.species === 'unknown' && t.speciesOther ? t.speciesOther : sp.name;
     const bits = [];
     if (t.note) bits.push(t.note);
     if (t.height) bits.push(`高 ${t.height}m`);
@@ -1012,11 +1126,14 @@ function renderList() {
     const thumb = t.photos && t.photos.length
       ? `<img class="tr-thumb" src="${t.photos[0]}" alt="">` : '';
 
+    const cnum = t.several
+      ? '<span class="tr-count several">若干</span>'
+      : (t.count > 1 ? `<span class="tr-count">×${t.count}</span>` : '');
+
     return `<div class="tree-row" data-id="${t.id}">
       <div class="tr-icon" style="background:${sp.color}22">${sp.icon}</div>
       <div class="tr-main">
-        <p class="tr-name">${escapeHtml(nm)}
-          ${t.count > 1 ? `<span class="tr-count">×${t.count}</span>` : ''}</p>
+        <p class="tr-name">${escapeHtml(speciesLabel(t))}${cnum}</p>
         <p class="tr-sub">${escapeHtml(bits.join(' · '))}</p>
       </div>${thumb}
     </div>`;
@@ -1037,18 +1154,19 @@ function renderList() {
    统计
    --------------------------------------------------------------- */
 function renderStats() {
-  const total = state.trees.reduce((s, t) => s + (t.count || 1), 0);
+  const total = sumCounts(state.trees);
   const bySpecies = {};
   for (const t of state.trees) {
     const sp = speciesById(t.species);
-    const nm = t.species === 'unknown' && t.speciesOther ? t.speciesOther : sp.name;
-    const key = nm;
-    bySpecies[key] = bySpecies[key] || { count: 0, records: 0, color: sp.color, icon: sp.icon };
-    bySpecies[key].count += (t.count || 1);
+    const key = speciesLabel(t);
+    bySpecies[key] = bySpecies[key] ||
+      { count: 0, records: 0, several: 0, color: sp.color, icon: sp.icon };
+    if (t.several) bySpecies[key].several += 1;
+    else bySpecies[key].count += (t.count || 1);
     bySpecies[key].records += 1;
   }
   const sorted = Object.entries(bySpecies).sort((a, b) => b[1].count - a[1].count);
-  const maxCount = sorted.length ? sorted[0][1].count : 1;
+  const maxCount = sorted.length ? Math.max(1, sorted[0][1].count) : 1;
 
   const withPhoto = state.trees.filter((t) => t.photos && t.photos.length).length;
 
@@ -1063,13 +1181,26 @@ function renderStats() {
     <div class="stat-card"><span class="sc-num">${new Set(state.trees.map(t => t.recorder).filter(Boolean)).size}</span><span class="sc-label">参与记录人</span></div>
   </div>`;
 
+  // 有「若干」时说明一句，免得看总数的人以为漏了
+  const svNote = severalNote(state.trees);
+  if (svNote) {
+    html += `<p class="hint" style="margin:2px 2px 10px">${svNote.replace(/[（）]/g, '')}
+      —— 这些点数量数不清，没有并进上面的棵数</p>`;
+  }
+
   if (sorted.length) {
     html += `<div class="bar-section"><h3>树种构成</h3>`;
     for (const [name, info] of sorted) {
-      const pct = (info.count / maxCount * 100).toFixed(1);
+      // 只有「若干」的树种，条子也要看得见一小截，否则会以为没数据
+      const pct = info.count
+        ? (info.count / maxCount * 100).toFixed(1)
+        : (info.several ? 3 : 0);
+      const num = info.count && info.several
+        ? `${info.count} 棵 + 若干 ${info.several} 处`
+        : (info.several ? `若干 ${info.several} 处` : `${info.count} 棵`);
       html += `<div class="bar-row">
         <div class="bar-head"><span>${info.icon} ${escapeHtml(name)}</span>
-          <span class="bh-num">${info.count} 棵</span></div>
+          <span class="bh-num">${num}</span></div>
         <div class="bar-track"><div class="bar-fill"
           style="width:${pct}%;background:${info.color}"></div></div>
       </div>`;
@@ -1094,8 +1225,9 @@ function exportCSV() {
   for (const t of state.trees) {
     const sp = speciesById(t.species);
     const row = [
-      t.id, sp.name, t.speciesOther || '', t.lat.toFixed(6), t.lon.toFixed(6),
-      t.count || 1, t.height ?? '', t.dbh ?? '', t.health || '',
+      t.id, speciesLabel(t), t.speciesOther || '', t.lat.toFixed(6), t.lon.toFixed(6),
+      t.several ? '若干' : (t.count || 1),
+      t.height ?? '', t.dbh ?? '', t.health || '',
       t.note || '', t.recorder || '', fmtTime(t.created), (t.photos || []).length,
     ].map((v) => {
       const s = String(v);
@@ -1215,7 +1347,20 @@ function bind() {
     el.addEventListener('click', () => {
       const inp = $('f-count');
       inp.value = Math.max(1, (parseInt(inp.value, 10) || 1) + Number(el.dataset.step));
+      // 手动调数字就说明知道数量，自动退出「若干」
+      if (state.pickingSeveral) { state.pickingSeveral = false; renderCountUI(); }
     });
+  });
+  // 「若干」：再点一下取消
+  $('btn-several').addEventListener('click', () => {
+    state.pickingSeveral = !state.pickingSeveral;
+    renderCountUI();
+  });
+
+  // 树种搜索：输入即筛选，不折叠
+  $('f-species-search').addEventListener('input', (e) => {
+    state.spSearch = e.target.value;
+    renderSpeciesGrid();
   });
 
   $('btn-photo').addEventListener('click', () => $('f-photo').click());
@@ -1302,8 +1447,11 @@ function bind() {
     e.target.checked ? boundaryLayer.addTo(map) : map.removeLayer(boundaryLayer);
     set3DLayerVisible('ly-boundary', e.target.checked);
   });
+  // 建筑名称和规划图点位合并到一个开关，避免图层面板太挤
   $('ly-labels').addEventListener('change', (e) => {
-    e.target.checked ? labelLayer.addTo(map) : map.removeLayer(labelLayer);
+    const on = e.target.checked;
+    if (on) { labelLayer.addTo(map); poiLayer.addTo(map); }
+    else { map.removeLayer(labelLayer); map.removeLayer(poiLayer); }
   });
   $('ly-trees').addEventListener('change', (e) => {
     e.target.checked ? treeLayer.addTo(map) : map.removeLayer(treeLayer);
