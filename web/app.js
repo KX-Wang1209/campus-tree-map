@@ -247,6 +247,241 @@ async function flushPending() {
 }
 
 /* ---------------------------------------------------------------
+   云端协作（腾讯云开发 CloudBase）
+
+   网页传到云上之后，学生用手机打开同一个网址就能一起记录，
+   不再要求同一个局域网，也不用老师一直开着电脑。
+   三种模式按优先级自动选：云端 → 局域网服务器 → 纯本地。
+   --------------------------------------------------------------- */
+const CLOUD_ENV = 'campus-tree-map-d9fro6lv4b0094f8';
+const CLOUD_REGION = 'ap-shanghai';
+const PROJECT_KEY = 'tjbpi_project_v1';
+const CLOUD_POLL_MS = 5000;
+
+// 明确列出要读的列，故意不写 * —— 邀请码那一列没有读权限，
+// 用 select('*') 会被数据库直接拒绝。
+const CLOUD_COLS = 'id,owner_id,lat,lon,species,species_other,several,qty,area,'
+  + 'height,dbh,health,note,recorder,photo_count,photos,created_at,updated_at';
+
+const cloud = {
+  enabled: false,
+  app: null,
+  db: null,
+  me: null,          // 我的云端身份 id
+  version: null,     // 上次看到的云端数据版本号
+  lastMax: 0,        // 已经同步到的最大时间戳
+  timer: null,
+  busy: false,
+};
+
+function getProject() { return localStorage.getItem(PROJECT_KEY) || ''; }
+function setProject(code) { localStorage.setItem(PROJECT_KEY, code); }
+
+/** 云端的一行 → 页面里用的记录 */
+function rowToTree(r) {
+  return {
+    id: r.id,
+    lat: r.lat, lon: r.lon,
+    species: r.species,
+    speciesOther: r.species_other || '',
+    several: !!r.several,
+    count: r.qty,
+    area: r.area,
+    height: r.height,
+    dbh: r.dbh,
+    health: r.health || '',
+    note: r.note || '',
+    recorder: r.recorder || '',
+    photos: [],            // 照片暂不上云，各人留在自己手机里
+    created: r.created_at,
+    updated: r.updated_at,
+    _cloud: true,
+  };
+}
+
+/** 能写进数据库的字段。故意不含 id 和 created_at —— 这两列数据库不给改，
+    带上它们整条更新都会被拒（实测过） */
+function treeFields(t) {
+  return {
+    lat: t.lat, lon: t.lon,
+    species: t.species,
+    species_other: t.speciesOther || '',
+    several: !!t.several,
+    qty: t.count ?? null,
+    area: t.area ?? null,
+    height: t.height ?? null,
+    dbh: t.dbh ?? null,
+    health: t.health || '',
+    note: t.note || '',
+    recorder: t.recorder || '',
+    photo_count: (t.photos || []).length,
+    photos: [],
+    updated_at: t.updated,
+  };
+}
+
+/** 新增用的整行（含 id / created_at / 邀请码） */
+function treeToInsert(t, project) {
+  return { id: t.id, ...treeFields(t), created_at: t.created, project };
+}
+
+/** 连云端。连不上就返回 false，交给后面的模式 */
+async function initCloud() {
+  if (typeof window.cloudbase === 'undefined') return false;
+  try {
+    const app = window.cloudbase.init({ env: CLOUD_ENV, region: CLOUD_REGION });
+    const auth = await app.auth.signInAnonymously();
+    if (auth && auth.error) return false;
+
+    const db = app.rdb();
+    const probe = await db.from('sync_state').select('version').limit(1);
+    if (probe.error) return false;
+
+    cloud.app = app;
+    cloud.db = db;
+    cloud.enabled = true;
+    cloud.version = probe.data && probe.data[0] ? probe.data[0].version : 0;
+
+    try {
+      const sess = await app.auth.getSession();
+      const tok = sess && sess.data && sess.data.session ? sess.data.session.access_token : null;
+      if (tok) {
+        cloud.me = JSON.parse(atob(tok.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).sub;
+      }
+    } catch (e) { /* 拿不到身份也不影响记录 */ }
+
+    await pullAll();
+    migrateLocalToCloud();
+    cloud.timer = setInterval(pollCloud, CLOUD_POLL_MS);
+    return true;
+  } catch (e) {
+    console.warn('云端连不上，改用其它模式', e);
+    return false;
+  }
+}
+
+/** 全量拉取。分页取，避免一次要太多被服务端截断 */
+async function pullAll() {
+  let cursor = 0, all = [], guard = 0;
+  while (guard++ < 40) {
+    const r = await cloud.db.from('trees').select(CLOUD_COLS)
+      .gt('updated_at', cursor).order('updated_at', { ascending: true }).limit(500);
+    if (r.error) { console.warn('拉取失败', r.error); break; }
+    const rows = r.data || [];
+    all = all.concat(rows);
+    if (rows.length < 500) break;
+    cursor = rows[rows.length - 1].updated_at;
+  }
+
+  const cloudIds = new Set(all.map((r) => r.id));
+  // 云端已经没有的（别人删了），本地也去掉；本地独有的先留着
+  const byId = new Map(state.trees.filter((t) => !t._cloud || cloudIds.has(t.id)).map((t) => [t.id, t]));
+  for (const r of all) {
+    const t = rowToTree(r);
+    const old = byId.get(t.id);
+    if (old && (old.photos || []).length) t.photos = old.photos;   // 本机拍的照片留着
+    byId.set(t.id, t);
+  }
+  state.trees = [...byId.values()];
+  cloud.lastMax = all.length ? Math.max(...all.map((r) => r.updated_at || 0)) : 0;
+  saveTrees();
+}
+
+/** 每隔几秒问一下"有没有新数据"，变了才去拉 */
+async function pollCloud() {
+  if (!cloud.enabled || cloud.busy || document.hidden) return;
+  cloud.busy = true;
+  try {
+    const v = await cloud.db.from('sync_state').select('version').limit(1);
+    const ver = v.data && v.data[0] ? v.data[0].version : null;
+    if (ver === null || ver === cloud.version) return;
+    cloud.version = ver;
+
+    // 往前多留 2 分钟，免得个别手机时钟慢漏掉记录
+    const since = Math.max(0, cloud.lastMax - 120000);
+    const r = await cloud.db.from('trees').select(CLOUD_COLS)
+      .gt('updated_at', since).order('updated_at', { ascending: true }).limit(500);
+    if (r.error) return;
+
+    for (const row of (r.data || [])) {
+      const t = rowToTree(row);
+      const i = state.trees.findIndex((x) => x.id === t.id);
+      if (i >= 0 && (state.trees[i].photos || []).length) t.photos = state.trees[i].photos;
+      if (i >= 0) state.trees[i] = t; else state.trees.push(t);
+      cloud.lastMax = Math.max(cloud.lastMax, row.updated_at || 0);
+    }
+    saveTrees();
+    renderTrees();
+    const lp = $('list-panel');
+    if (lp && !lp.classList.contains('hidden')) renderList();
+  } catch (e) {
+    /* 网络抖一下很正常，下一轮再试 */
+  } finally {
+    cloud.busy = false;
+  }
+}
+
+/** 上传一条。返回 'ok' / 'denied'（邀请码不对）/ 'error'（网络问题） */
+async function cloudSave(t) {
+  let project = getProject();
+  if (!project) {
+    const code = prompt('请输入老师给的采集邀请码：');
+    if (!code || !code.trim()) { toast('没有邀请码，传不到云端', true); return 'denied'; }
+    project = code.trim();
+    setProject(project);
+  }
+
+  const isNew = !t._cloud;
+  // 必须 .select() 要回受影响的行：数据库的行级权限是"静默"拦截的，
+  // 动别人的记录时它不报错，只是影响 0 行。只看 error 会误判成成功。
+  const r = isNew
+    ? await cloud.db.from('trees').insert(treeToInsert(t, project)).select('id')
+    : await cloud.db.from('trees').update(treeFields(t)).eq('id', t.id).select('id');
+
+  if (!r.error) {
+    const n = Array.isArray(r.data) ? r.data.length : 1;
+    if (n > 0) { t._cloud = true; delete t._localOnly; return 'ok'; }
+    // 影响到 0 行：这条不是他记的，或者已经在云端被删掉了。
+    // 标成"只存本机"，免得下次启动又去补传、插出一份重复记录。
+    t._localOnly = true;
+    toast('这条不是你记的，只存在本机', true);
+    return 'denied';
+  }
+
+  const msg = (r.error && r.error.message) || '';
+  if (/row-level security|violates row-level/i.test(msg)) {
+    localStorage.removeItem(PROJECT_KEY);      // 码不对，清掉让下次重填
+    toast('上传被拒绝：邀请码不对', true);
+    return 'denied';
+  }
+  if (isNew && /duplicate key/i.test(msg)) {
+    t.id = uid();                              // 编号撞车，换个新的再来
+    t._cloud = false;
+    return cloudSave(t);
+  }
+  return 'error';
+}
+
+/** 删云端一条。必须 .select() 拿回受影响的行 —— 见 cloudSave 里的说明 */
+async function cloudDelete(id) {
+  const r = await cloud.db.from('trees').delete().eq('id', id).select('id');
+  if (r.error) return false;
+  return Array.isArray(r.data) && r.data.length > 0;
+}
+
+/** 把以前存在本机、还没上云的记录补传上去 */
+async function migrateLocalToCloud() {
+  if (!getProject()) return;                   // 没填过邀请码就别打扰
+  const locals = state.trees.filter((t) => !t._cloud && !t._localOnly);
+  let n = 0;
+  for (const t of locals) {
+    const res = await cloudSave(t);
+    if (res === 'ok') n++;
+  }
+  if (n) { renderTrees(); toast(`已把本机 ${n} 条记录传到云端`); }
+}
+
+/* ---------------------------------------------------------------
    地图初始化
    --------------------------------------------------------------- */
 async function initMap() {
@@ -561,6 +796,13 @@ function renderTrees() {
 function updateModeBar() {
   const line = summaryLine(state.trees);
   const stat = state.trees.length ? `已记 ${state.trees.length} 条 · ${line}` : '';
+  if (cloud.enabled) {
+    // 云端模式：网页发出去，学生用谁的网都行
+    const pendingN = state.trees.filter((t) => !t._cloud && !t._localOnly).length;
+    const pending = pendingN ? ` · <span style="color:#e65100">${pendingN} 条待上传</span>` : '';
+    $('mode-text').innerHTML = `☁️ 云端协作中${stat ? ' · ' + stat : ''}${pending}`;
+    return;
+  }
   if (collab.enabled) {
     const who = collab.online > 1 ? ` · ${collab.online} 人在线` : '';
     // 局域网地址一直显示，老师任何时候都能看到该发什么给学生
@@ -913,6 +1155,8 @@ function saveSheet() {
     return;
   }
 
+  const prev = state.trees.find((t) => t.id === state.draft.id);
+
   const rec = {
     id: state.draft.id,
     lat, lon,
@@ -932,6 +1176,8 @@ function saveSheet() {
     photos: state.pendingPhotos,
     created: state.draft.created || Date.now(),
     updated: Date.now(),
+    // 这个标记必须继承下来：丢了的话，改一条已上传的记录会被当成新记录再插一份
+    _cloud: prev ? prev._cloud : false,
   };
 
   if (recorder) localStorage.setItem(RECORDER_KEY, recorder);
@@ -941,8 +1187,27 @@ function saveSheet() {
   else state.trees.push(rec);
   const ok = saveTrees();
 
+  if (cloud.enabled) {
+    // 云端模式：先在本机显示，再传上去，别人几秒后就能看到
+    toast(idx >= 0 ? '已更新' : '已记录 ✓');
+    closeSheet();
+    renderTrees();
+    cloudSave(rec).then((res) => {
+      if (res === 'ok') return;
+      // 没传上去：标记成本机记录，避免让人以为别人也看得到
+      const cur = state.trees.find((x) => x.id === rec.id);
+      if (cur) cur._cloud = false;
+      saveTrees();
+      renderTrees();
+      toast(res === 'denied'
+        ? '这条只存在本机：邀请码不对'
+        : '网络不通，先存在本机，稍后自动补传', true);
+    });
+    return;
+  }
+
   if (collab.enabled) {
-    // 协作模式：先在本地显示，再推给服务器，别人就能看到
+    // 局域网服务器模式：先在本地显示，再推给服务器
     toast(idx >= 0 ? '已更新' : '已记录 ✓');
     closeSheet();
     renderTrees();
@@ -960,9 +1225,16 @@ function deleteTree() {
   if (!state.selectedId) return;
   if (!confirm('确定删除这条记录吗？')) return;
   const id = state.selectedId;
+  const wasCloud = !!state.trees.find((t) => t.id === id)?._cloud;
   state.trees = state.trees.filter((t) => t.id !== id);
   saveTrees();
-  pushDelete(id);              // 协作模式下让别人的地图上也消失
+  if (cloud.enabled && wasCloud) {
+    cloudDelete(id).then((okk) => {
+      if (!okk) toast('云端删除失败，可能这条不是你记的', true);
+    });
+  } else {
+    pushDelete(id);            // 局域网协作模式下让别人的地图上也消失
+  }
   toast('已删除');
   closeSheet();
   renderTrees();
@@ -1727,7 +1999,13 @@ function bind() {
   await initMap();
   renderTrees();
 
-  // 尝试连协作服务器；连不上就静默停留在本地模式
-  const ok = await initCollab();
-  if (!ok) updateModeBar();
+  // 依次尝试：云端 → 局域网服务器 → 纯本地
+  const okCloud = await initCloud();
+  if (okCloud) {
+    renderTrees();
+    updateModeBar();
+  } else {
+    const ok = await initCollab();
+    if (!ok) updateModeBar();
+  }
 })();

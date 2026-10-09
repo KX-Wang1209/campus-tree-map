@@ -29,3 +29,6 @@ __pycache__/
 
 # 用户上传的原始文件（已归档到 data/raw/）
 /uploads/
+
+# 浏览器截图（视觉工具产物）
+browser-assets/
