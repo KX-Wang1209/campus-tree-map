@@ -391,7 +391,8 @@ function rowToTree(r) {
     health: r.health || '',
     note: r.note || '',
     recorder: r.recorder || '',
-    photos: [],            // 照片暂不上云，各人留在自己手机里
+    // 照片存的是云上的文件编号，显示时才换成访问地址
+    photos: Array.isArray(r.photos) ? r.photos : [],
     created: r.created_at,
     updated: r.updated_at,
     _cloud: true,
@@ -417,7 +418,8 @@ function treeFields(t) {
     note: t.note || '',
     recorder: t.recorder || '',
     photo_count: (t.photos || []).length,
-    photos: [],
+    // 只把云上的文件编号入库；本机 dataURL 太大，留在手机里
+    photos: (t.photos || []).filter((p) => !String(p).startsWith('data:')),
     updated_at: t.updated,
   };
   // 数据库还没加这一列时不发它 —— 带上不存在的列，整条写入都会失败
@@ -493,7 +495,7 @@ async function pullAll() {
   for (const r of all) {
     const t = rowToTree(r);
     const old = byId.get(t.id);
-    if (old && (old.photos || []).length) t.photos = old.photos;   // 本机拍的照片留着
+    if (old) t.photos = mergePhotos(old.photos, t.photos);
     byId.set(t.id, t);
   }
   state.trees = [...byId.values()];
@@ -520,7 +522,7 @@ async function pollCloud() {
     for (const row of (r.data || [])) {
       const t = rowToTree(row);
       const i = state.trees.findIndex((x) => x.id === t.id);
-      if (i >= 0 && (state.trees[i].photos || []).length) t.photos = state.trees[i].photos;
+      if (i >= 0) t.photos = mergePhotos(state.trees[i].photos, t.photos);
       if (i >= 0) state.trees[i] = t; else state.trees.push(t);
       cloud.lastMax = Math.max(cloud.lastMax, row.updated_at || 0);
     }
@@ -585,6 +587,77 @@ async function cloudSave(t) {
 }
 
 /** 删云端一条。走函数，函数里核对身份 */
+/* ---------------------------------------------------------------
+   照片
+
+   只存「文件编号」，真正显示时才去换访问地址。
+   换来的地址缓存起来反复用 —— 每次重新换地址都会变，一变浏览器
+   就当新图重新下载，白白花流量。
+   --------------------------------------------------------------- */
+const PHOTO_URLS_KEY = 'tjbpi_photo_urls_v1';
+let photoUrls = {};
+try { photoUrls = JSON.parse(localStorage.getItem(PHOTO_URLS_KEY) || '{}') || {}; } catch (e) { photoUrls = {}; }
+
+function rememberPhotoUrl(id, url) {
+  if (!id || !url) return;
+  photoUrls[id] = url;
+  try { localStorage.setItem(PHOTO_URLS_KEY, JSON.stringify(photoUrls)); } catch (e) {}
+}
+
+/** 合并本机和云端的照片：云端的为准，本机还没传上去的补在后面 */
+function mergePhotos(local, remote) {
+  const out = (remote || []).filter(Boolean).slice(0, 3);
+  for (const p of (local || [])) {
+    if (String(p).startsWith('data:') && out.length < 3) out.push(p);
+  }
+  return out;
+}
+
+/** 把一条记录的 photos 变成能直接显示的地址（本机 dataURL 原样返回） */
+async function photoSrcs(list) {
+  const arr = list || [];
+  const need = arr.filter((p) => !String(p).startsWith('data:') && !photoUrls[p]);
+  if (need.length && cloud.enabled) {
+    try {
+      const r = await cloud.app.getTempFileURL({ fileList: need });
+      for (const it of (r.fileList || [])) {
+        rememberPhotoUrl(it.fileID || it.fileid, it.tempFileURL || it.download_url);
+      }
+    } catch (e) { /* 换不到就先不显示，下次再说 */ }
+  }
+  return arr.map((p) => (String(p).startsWith('data:') ? p : (photoUrls[p] || '')));
+}
+
+/** 把还没上云的照片传上去，成功后把本机 dataURL 换成文件编号 */
+async function uploadTreePhotos(t) {
+  if (!cloud.enabled || !cloud.app) return false;
+  const list = t.photos || [];
+  let changed = false;
+  for (let i = 0; i < list.length; i++) {
+    if (!String(list[i]).startsWith('data:')) continue;
+    try {
+      const blob = await (await fetch(list[i])).blob();
+      const f = new File([blob], 'p.jpg', { type: 'image/jpeg' });
+      const r = await cloud.app.uploadFile({ cloudPath: `photos/${t.id}/${i}.jpg`, fileContent: f });
+      const fid = r.fileID || (r.data && r.data.fileID);
+      if (!fid) continue;
+      rememberPhotoUrl(fid, r.download_url || (r.data && r.data.download_url));
+      list[i] = fid;
+      changed = true;
+    } catch (e) { /* 这张没传上就先留着本机副本，下次再传 */ }
+  }
+  if (changed) { t.photos = list; saveTrees(); }
+  return changed;
+}
+
+/** 删除一条记录留在云上的照片 */
+async function deleteTreePhotos(t) {
+  if (!cloud.enabled || !cloud.app) return;
+  const ids = (t.photos || []).filter((p) => !String(p).startsWith('data:'));
+  if (!ids.length) return;
+  try { await cloud.app.deleteFile({ fileList: ids }); } catch (e) {}
+}
+
 async function cloudDelete(id) {
   const r = await cloud.db.rpc('erase_tree', {
     p_name: ident.name, p_pin: ident.pin, p_id: id,
@@ -597,6 +670,18 @@ async function cloudDelete(id) {
 }
 
 /** 把以前存在本机、还没上云的记录补传上去 */
+/** 有些照片当时没传上去（比如信号不好），开机时补传一次 */
+async function retryPendingPhotos() {
+  if (!cloud.enabled || !ident.ready) return;
+  const need = state.trees.filter((t) => t._cloud && (t.photos || []).some((p) => String(p).startsWith('data:')));
+  if (!need.length) return;
+  let done = 0;
+  for (const t of need) {
+    if (await uploadTreePhotos(t)) { await cloudSave(t); done++; }
+  }
+  if (done) { renderTrees(); toast(`补传了 ${done} 条的照片`); }
+}
+
 async function migrateLocalToCloud() {
   const locals = state.trees.filter((t) => !t._cloud && !t._localOnly);
   let n = 0;
@@ -826,9 +911,11 @@ function amountText(t) {
 /** 地图角标：短，只标"这一处有多株"或"数不清" */
 function pinBadge(t) {
   const cfg = CATEGORY[categoryOf(t)];
-  if (t.several) return `<div class="pin-count several">${cfg.count ? '若干' : '未测'}</div>`;
-  if (cfg.count && t.count > 1) return `<div class="pin-count">${t.count}</div>`;
-  return '';
+  const cam = (t.photos && t.photos.length && $('ly-photos') && $('ly-photos').checked)
+    ? `<div class="pin-cam">📷</div>` : '';
+  if (t.several) return `<div class="pin-count several">${cfg.count ? '若干' : '未测'}</div>` + cam;
+  if (cfg.count && t.count > 1) return `<div class="pin-count">${t.count}</div>` + cam;
+  return cam;
 }
 
 /** 按类别合计（株、丛、m² 分开加） */
@@ -918,16 +1005,8 @@ function renderTrees() {
     pin.on('click', onClick);
     pin.addTo(treeLayer);
 
-    if (showPhotos && t.photos && t.photos.length) {
-      L.marker([t.lat, t.lon], {
-        icon: L.divIcon({
-          className: 'photo-bubble',
-          html: `<img src="${t.photos[0]}" alt="">`,
-          iconSize: [76, 76], iconAnchor: [38, 108],
-        }),
-        interactive: false,
-      }).addTo(photoLayer);
-    }
+    // 照片不在这里加载 —— 地图上可能有上百条记录，每张图都拉下来太费流量。
+    // 只显示一个相机角标，真正点开这条记录时才去取图。
   }
 
   $('list-count').textContent = state.trees.length;
@@ -1404,10 +1483,13 @@ function renderCountUI() {
     : cfg.hint;
 }
 
-function renderPhotoPreview() {
+async function renderPhotoPreview() {
   const box = $('photo-preview');
+  const srcs = await photoSrcs(state.pendingPhotos);
   box.innerHTML = state.pendingPhotos.map((p, i) =>
-    `<div class="photo-thumb"><img src="${p}" alt=""><button type="button" data-i="${i}">✕</button></div>`
+    `<div class="photo-thumb">${
+      srcs[i] ? `<img src="${srcs[i]}" alt="">` : '<span class="photo-loading">…</span>'
+    }<button type="button" data-i="${i}">✕</button></div>`
   ).join('');
   box.querySelectorAll('button').forEach((el) => {
     el.addEventListener('click', () => {
@@ -1454,7 +1536,7 @@ function compressImage(file, maxSide, quality) {
 
 /* 保存：只存这一类该记的字段
      （乔木存胸径/树高/株数，灌木只存株数，草本存面积，竹类存丛数） */
-function saveSheet() {
+async function saveSheet() {
   // 云端模式下必须先登记。登记框只是一个盖住屏幕的浮层，
   // 万一被绕过就会存出「没有归属」的记录（谁都没法改），
   // 所以在保存这一步再硬挡一次。
@@ -1548,9 +1630,14 @@ function saveSheet() {
   const ok = saveTrees();
 
   if (cloud.enabled) {
-    // 云端模式：先在本机显示，再传上去，别人几秒后就能看到
     toast(idx >= 0 ? '已更新' : '已记录 ✓');
     closeSheet();
+    // 先把照片传上去再存记录：传完别人打开就能看到。
+    // 传失败的那几张会留本机副本，下次保存时自动重试。
+    if ((rec.photos || []).some((p) => String(p).startsWith('data:'))) {
+      toast('正在上传照片…');
+      await uploadTreePhotos(rec);
+    }
     renderTrees();
     cloudSave(rec).then((res) => {
       if (res === 'ok') return;
@@ -1585,12 +1672,15 @@ function deleteTree() {
   if (!state.selectedId) return;
   if (!confirm('确定删除这条记录吗？')) return;
   const id = state.selectedId;
-  const wasCloud = !!state.trees.find((t) => t.id === id)?._cloud;
+  const gone = state.trees.find((t) => t.id === id);
+  const wasCloud = !!(gone && gone._cloud);
   state.trees = state.trees.filter((t) => t.id !== id);
   saveTrees();
   if (cloud.enabled && wasCloud) {
     cloudDelete(id).then((okk) => {
-      if (!okk) toast('云端删除失败，可能这条不是你记的', true);
+      // 记录删掉了，云上的照片也一并清掉，免得白占空间
+      if (okk) deleteTreePhotos(gone);
+      else toast('云端删除失败，可能这条不是你记的', true);
     });
   } else {
     pushDelete(id);            // 局域网协作模式下让别人的地图上也消失
@@ -1979,8 +2069,9 @@ function renderList() {
     if (t.recorder) bits.push(t.recorder);
     bits.push(fmtTime(t.created));
 
+    // 同样不加载图片，只标个数量；点开这条才看图
     const thumb = t.photos && t.photos.length
-      ? `<img class="tr-thumb" src="${t.photos[0]}" alt="">` : '';
+      ? `<span class="tr-cam">📷 ${t.photos.length}</span>` : '';
 
     const cnum = `<span class="tr-count${t.several ? ' several' : ''}">${
       escapeHtml(amountText(t))}</span>`;
@@ -2397,6 +2488,7 @@ function bind() {
         if ($('f-recorder') && !$('f-recorder').value) $('f-recorder').value = saved.name;
         renderTrees();
         updateModeBar();
+        retryPendingPhotos();     // 有照片没传上去的，补一次
       } else {
         localStorage.removeItem(IDENT_KEY);
         showIdentGate('之前登记的暗号对不上了，重新填一下');

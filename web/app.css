@@ -259,6 +259,13 @@ html, body {
   border-style: dashed; border-color: #78909c;
   color: #546e7a; padding: 0 4px; font-size: 9.5px;
 }
+/* 有照片的角标：不加载图片，只标一个相机 */
+.tree-pin .pin-cam {
+  position: absolute; bottom: -5px; left: -5px;
+  background: #fff; border-radius: 7px;
+  font-size: 9px; line-height: 15px; height: 15px; padding: 0 3px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.25);
+}
 .tree-pin.selected .pin-dot {
   border-color: #ffd54f;
   box-shadow: 0 0 0 4px rgba(255,213,79,.55), 0 2px 8px rgba(0,0,0,.4);
@@ -537,6 +544,10 @@ html, body {
   border: none; background: var(--danger); color: #fff;
   font-size: 11px; cursor: pointer; line-height: 1;
 }
+.photo-loading { display: inline-block; width: 62px; height: 62px; line-height: 62px;
+  text-align: center; border-radius: 9px; background: #f4f6f2; color: #9e9e9e; font-size: 12px; }
+/* 清单里只标照片数量，不加载图片 */
+.tr-cam { font-size: 11px; color: var(--ink-2); white-space: nowrap; }
 
 /* ============ 合并确认 ============ */
 .conflict {
