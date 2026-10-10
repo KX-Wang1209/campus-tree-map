@@ -256,7 +256,10 @@ async function flushPending() {
    --------------------------------------------------------------- */
 const CLOUD_ENV = 'campus-tree-map-d9fro6lv4b0094f8';
 const CLOUD_REGION = 'ap-shanghai';
-const CLOUD_POLL_MS = 5000;
+// 多久问一次「有没有新记录」。这个值直接决定数据库消耗：
+// 每问一次都算一次数据库调用，而数据库算力正是资源点的大头
+// （实测占九成）。15 秒足够及时，消耗只有 5 秒的三分之一。
+const CLOUD_POLL_MS = 15000;
 
 // 明确列出要读的列，故意不写 * —— 库里有几列（比如建库时那个邀请码）
 // 没给读权限，用 select('*') 会被数据库直接拒绝。
