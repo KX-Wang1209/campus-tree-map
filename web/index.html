@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="vendor/maplibre-gl.css">
 <!-- ?v=N 是防缓存：改了下面这些文件就把数字加一，
      否则学生手机（尤其微信）会一直用旧的缓存副本 -->
-<link rel="stylesheet" href="app.css?v=4">
+<link rel="stylesheet" href="app.css?v=6">
 </head>
 <body>
 
@@ -149,9 +149,11 @@
     <!-- 照片 -->
     <div class="field">
       <label>照片</label>
-      <input id="f-photo" type="file" accept="image/*" capture="environment" class="hidden">
+      <!-- 不要加 capture 属性：那会让手机跳过选择界面、直接开相机，
+           就没法从相册里选已经拍好的照片了 -->
+      <input id="f-photo" type="file" accept="image/*" multiple class="hidden">
       <div class="photo-row">
-        <button id="btn-photo" class="btn ghost small">📷 拍照 / 选图</button>
+        <button id="btn-photo" class="btn ghost small">📷 拍照 / 相册</button>
         <div id="photo-preview"></div>
       </div>
     </div>
@@ -370,7 +372,7 @@
 <script src="vendor/cloudbase.js?v=3.10.1"></script>
 <script src="vendor/leaflet.js"></script>
 <script src="vendor/maplibre-gl.js"></script>
-<script src="view3d.js?v=4"></script>
-<script src="app.js?v=5"></script>
+<script src="view3d.js?v=6"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>

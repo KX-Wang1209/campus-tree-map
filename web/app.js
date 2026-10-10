@@ -1452,6 +1452,13 @@ function compressImage(file, maxSide, quality) {
 /* 保存：只存这一类该记的字段
      （乔木存胸径/树高/株数，灌木只存株数，草本存面积，竹类存丛数） */
 function saveSheet() {
+  // 云端模式下必须先登记。登记框只是一个盖住屏幕的浮层，
+  // 万一被绕过就会存出「没有归属」的记录（谁都没法改），
+  // 所以在保存这一步再硬挡一次。
+  if (cloud.enabled && !ident.ready) {
+    showIdentGate('先登记名字和暗号，才能往地图里记');
+    return;
+  }
   if (!state.pickingSpecies) {
     toast('请选择植物种类（不认识就选「暂不确定」）', true);
     return;
@@ -2252,9 +2259,10 @@ function bind() {
   });
 
   $('btn-photo').addEventListener('click', () => $('f-photo').click());
-  $('f-photo').addEventListener('change', (e) => {
-    addPhoto(e.target.files[0]);
-    e.target.value = '';
+  $('f-photo').addEventListener('change', async (e) => {
+    // 支持一次选多张（相册里挑）
+    for (const f of Array.from(e.target.files || [])) await addPhoto(f);
+    e.target.value = '';   // 清空，否则同一张图第二次选不触发
   });
 
   // 底部加树：优先用 GPS
