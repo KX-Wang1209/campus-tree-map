@@ -22,6 +22,7 @@ const state = {
   spSearch: '',            // 树种搜索词
   spCollapsed: new Set(['灌木或藤木', '草本', '竹类']),  // 默认折起的组
   choosingOnMap: false,
+  drawingRange: false,     // 正在地图上圈范围
   sort: 'time',
   search: '',
 };
@@ -255,13 +256,110 @@ async function flushPending() {
    --------------------------------------------------------------- */
 const CLOUD_ENV = 'campus-tree-map-d9fro6lv4b0094f8';
 const CLOUD_REGION = 'ap-shanghai';
-const PROJECT_KEY = 'tjbpi_project_v1';
 const CLOUD_POLL_MS = 5000;
 
-// 明确列出要读的列，故意不写 * —— 邀请码那一列没有读权限，
-// 用 select('*') 会被数据库直接拒绝。
-const CLOUD_COLS = 'id,owner_id,lat,lon,species,species_other,several,qty,area,'
+// 明确列出要读的列，故意不写 * —— 库里有几列（比如建库时那个邀请码）
+// 没给读权限，用 select('*') 会被数据库直接拒绝。
+const CLOUD_COLS = 'id,owner_id,owner_name,lat,lon,species,species_other,several,qty,area,'
+  + 'poly,height,dbh,health,note,recorder,photo_count,photos,created_at,updated_at';
+
+// 数据库还没加 poly 列时的退路。加了以后会自动用上面那份。
+const CLOUD_COLS_OLD = 'id,owner_id,owner_name,lat,lon,species,species_other,several,qty,area,'
   + 'height,dbh,health,note,recorder,photo_count,photos,created_at,updated_at';
+
+/* ---------------------------------------------------------------
+   实名登记
+
+   进站填一次「名字 + 暗号」，之后：
+     · 记录归到这个名下（换设备、清缓存也找得回来）
+     · 只能改删自己名下和本机还没上传的记录
+     · 老师（在库里标记过）能改删任何记录
+
+   名字是自己填的，不是手机号那种实名认证 —— 用途是"分清谁记的"，
+   不是证明身份。暗号只存 md5，别人读不到。
+   --------------------------------------------------------------- */
+const IDENT_KEY = 'tjbpi_ident_v1';
+
+const ident = { name: '', pin: '', teacher: false, ready: false };
+
+function loadIdent() {
+  try {
+    const s = localStorage.getItem(IDENT_KEY);
+    if (!s) return null;
+    const o = JSON.parse(s);
+    return o && o.name && o.pin ? o : null;
+  } catch (e) { return null; }
+}
+
+function saveIdent(name, pin) {
+  localStorage.setItem(IDENT_KEY, JSON.stringify({ name, pin }));
+}
+
+/** 向服务器核对身份。名字没登记过就当场登记，登记过就要对暗号 */
+async function cloudWhoAmI(name, pin) {
+  const r = await cloud.db.rpc('who_am_i', { p_name: name, p_pin: pin });
+  if (r && r.error) return { ok: false, reason: 'error', msg: r.error.message };
+  const d = r && r.data;
+  const o = Array.isArray(d) ? d[0] : d;
+  if (!o) return { ok: false, reason: 'empty' };
+  return { ok: !!o.ok, reason: o.reason || '', teacher: !!o.teacher, created: !!o.created };
+}
+
+/** 这条能不能改？云端的只有自己的（或老师）能改 */
+function canEdit(t) {
+  if (!t) return true;            // 正在新建
+  if (!t._cloud) return true;     // 还在本机
+  if (ident.teacher) return true; // 老师能管所有
+  return t.ownerName === ident.name;
+}
+
+/** 弹出"你是谁"，挡住后面的操作 */
+function showIdentGate(msg) {
+  $('ident-mask').classList.remove('hidden');
+  $('ident-panel').classList.remove('hidden');
+  $('id-msg').textContent = msg || '';
+  $('id-name').value = ident.name || '';
+  $('id-pin').value = '';
+  setTimeout(() => $('id-pin').focus(), 100);
+}
+
+function hideIdentGate() {
+  $('ident-mask').classList.add('hidden');
+  $('ident-panel').classList.add('hidden');
+}
+
+/** 提交登记。成功返回 true */
+async function submitIdent() {
+  const name = $('id-name').value.trim();
+  const pin = $('id-pin').value.trim();
+  const msg = $('id-msg');
+
+  if (!name) { msg.textContent = '请填名字'; return false; }
+  if (pin.length < 4) { msg.textContent = '暗号至少 4 位（数字或字母都行）'; return false; }
+
+  msg.textContent = '正在核对…';
+  const r = await cloudWhoAmI(name, pin);
+  if (!r.ok) {
+    msg.textContent = r.reason === 'wrong_pin'
+      ? '这个名字已经有人用了，暗号不对。换个暗号，或把名字改一下（比如加个姓）'
+      : '没连上服务器，稍后再试';
+    return false;
+  }
+
+  ident.name = name;
+  ident.pin = pin;
+  ident.teacher = !!r.teacher;
+  ident.ready = true;
+  saveIdent(name, pin);
+  hideIdentGate();
+
+  // 记录人跟着身份走，省得每棵树都填一遍
+  if ($('f-recorder')) $('f-recorder').value = name;
+  renderTrees();
+  updateModeBar();
+  toast(r.created ? `欢迎，${name}` : `欢迎回来，${name}`);
+  return true;
+}
 
 const cloud = {
   enabled: false,
@@ -274,9 +372,6 @@ const cloud = {
   busy: false,
 };
 
-function getProject() { return localStorage.getItem(PROJECT_KEY) || ''; }
-function setProject(code) { localStorage.setItem(PROJECT_KEY, code); }
-
 /** 云端的一行 → 页面里用的记录 */
 function rowToTree(r) {
   return {
@@ -287,6 +382,7 @@ function rowToTree(r) {
     several: !!r.several,
     count: r.qty,
     area: r.area,
+    poly: Array.isArray(r.poly) ? r.poly : [],
     height: r.height,
     dbh: r.dbh,
     health: r.health || '',
@@ -296,19 +392,22 @@ function rowToTree(r) {
     created: r.created_at,
     updated: r.updated_at,
     _cloud: true,
+    ownerId: r.owner_id || null,
+    ownerName: r.owner_name || '',
   };
 }
 
 /** 能写进数据库的字段。故意不含 id 和 created_at —— 这两列数据库不给改，
     带上它们整条更新都会被拒（实测过） */
 function treeFields(t) {
-  return {
+  const f = {
     lat: t.lat, lon: t.lon,
     species: t.species,
     species_other: t.speciesOther || '',
     several: !!t.several,
     qty: t.count ?? null,
     area: t.area ?? null,
+    poly: Array.isArray(t.poly) ? t.poly : [],
     height: t.height ?? null,
     dbh: t.dbh ?? null,
     health: t.health || '',
@@ -318,11 +417,16 @@ function treeFields(t) {
     photos: [],
     updated_at: t.updated,
   };
+  // 数据库还没加这一列时不发它 —— 带上不存在的列，整条写入都会失败
+  if (!(cloud.cols || '').includes('poly')) delete f.poly;
+  return f;
 }
 
-/** 新增用的整行（含 id / created_at / 邀请码） */
-function treeToInsert(t, project) {
-  return { id: t.id, ...treeFields(t), created_at: t.created, project };
+/** 用到的整行（含 id / created_at / 归属人） */
+function treeToInsert(t) {
+  // project 是建库时留下的列（早先用来存采集邀请码），现在不用了，
+  // 但那一列当初建成了"必填"，不给值插不进去。所以照旧塞个空串。
+  return { id: t.id, ...treeFields(t), owner_name: ident.name, project: '', created_at: t.created };
 }
 
 /** 连云端。连不上就返回 false，交给后面的模式 */
@@ -336,6 +440,13 @@ async function initCloud() {
     const db = app.rdb();
     const probe = await db.from('sync_state').select('version').limit(1);
     if (probe.error) return false;
+
+    // 数据库有没有「范围」那一列？老库没有。
+    // 不做这一步的话，列清单里带上不存在的列会让整条查询失败，
+    // 页面上一棵树都显示不出来。
+    const probePoly = await db.from('trees').select('poly').limit(1);
+    cloud.cols = probePoly.error ? CLOUD_COLS_OLD : CLOUD_COLS;
+    if (probePoly.error) console.warn('数据库还没有 poly 列，先按旧结构跑（范围功能不显示）');
 
     cloud.app = app;
     cloud.db = db;
@@ -364,7 +475,7 @@ async function initCloud() {
 async function pullAll() {
   let cursor = 0, all = [], guard = 0;
   while (guard++ < 40) {
-    const r = await cloud.db.from('trees').select(CLOUD_COLS)
+    const r = await cloud.db.from('trees').select(cloud.cols || CLOUD_COLS)
       .gt('updated_at', cursor).order('updated_at', { ascending: true }).limit(500);
     if (r.error) { console.warn('拉取失败', r.error); break; }
     const rows = r.data || [];
@@ -399,7 +510,7 @@ async function pollCloud() {
 
     // 往前多留 2 分钟，免得个别手机时钟慢漏掉记录
     const since = Math.max(0, cloud.lastMax - 120000);
-    const r = await cloud.db.from('trees').select(CLOUD_COLS)
+    const r = await cloud.db.from('trees').select(cloud.cols || CLOUD_COLS)
       .gt('updated_at', since).order('updated_at', { ascending: true }).limit(500);
     if (r.error) return;
 
@@ -421,57 +532,69 @@ async function pollCloud() {
   }
 }
 
-/** 上传一条。返回 'ok' / 'denied'（邀请码不对）/ 'error'（网络问题） */
+/** 上传一条。返回 'ok' / 'denied'（被数据库挡住）/ 'error'（网络问题） */
 async function cloudSave(t) {
-  let project = getProject();
-  if (!project) {
-    const code = prompt('请输入老师给的采集邀请码：');
-    if (!code || !code.trim()) { toast('没有邀请码，传不到云端', true); return 'denied'; }
-    project = code.trim();
-    setProject(project);
-  }
-
   const isNew = !t._cloud;
-  // 必须 .select() 要回受影响的行：数据库的行级权限是"静默"拦截的，
-  // 动别人的记录时它不报错，只是影响 0 行。只看 error 会误判成成功。
-  const r = isNew
-    ? await cloud.db.from('trees').insert(treeToInsert(t, project)).select('id')
-    : await cloud.db.from('trees').update(treeFields(t)).eq('id', t.id).select('id');
 
-  if (!r.error) {
-    const n = Array.isArray(r.data) ? r.data.length : 1;
-    if (n > 0) { t._cloud = true; delete t._localOnly; return 'ok'; }
-    // 影响到 0 行：这条不是他记的，或者已经在云端被删掉了。
-    // 标成"只存本机"，免得下次启动又去补传、插出一份重复记录。
+  // 新增直接写；改动走函数，函数里核对名字和暗号。
+  if (isNew) {
+    const r = await cloud.db.from('trees').insert(treeToInsert(t)).select('id');
+    if (!r.error) {
+      const n = Array.isArray(r.data) ? r.data.length : 1;
+      if (n > 0) { t._cloud = true; t.ownerName = ident.name; delete t._localOnly; return 'ok'; }
+    }
+    const msg = (r.error && r.error.message) || '';
+    if (/row-level security|violates row-level/i.test(msg)) {
+      // 正常不该走到这里。真出现了多半是数据库的写入策略还是旧版
+      // （早先要求带采集邀请码），让老师跑一次 SQL 就好。
+      toast('上传被拒：数据库权限还是旧版，请老师执行一次 SQL', true);
+      return 'denied';
+    }
+    if (/duplicate key/i.test(msg)) {
+      t.id = uid();
+      t._cloud = false;
+      return cloudSave(t);
+    }
+    return 'error';
+  }
+
+  // 改一条：交给数据库函数，函数里核对身份，顺便挡住"改别人的"
+  const r = await cloud.db.rpc('amend_tree', {
+    p_name: ident.name, p_pin: ident.pin, p_id: t.id,
+    p_patch: treeFields(t),
+  });
+  const d = r && !r.error ? (Array.isArray(r.data) ? r.data[0] : r.data) : null;
+  if (d && d.ok) { t._cloud = true; return 'ok'; }
+
+  const reason = d ? d.reason : 'error';
+  if (reason === 'not_yours') {
     t._localOnly = true;
-    toast('这条不是你记的，只存在本机', true);
+    toast('这条不是在你名下，改不了', true);
     return 'denied';
   }
-
-  const msg = (r.error && r.error.message) || '';
-  if (/row-level security|violates row-level/i.test(msg)) {
-    localStorage.removeItem(PROJECT_KEY);      // 码不对，清掉让下次重填
-    toast('上传被拒绝：邀请码不对', true);
+  if (reason === 'bad_ident') {
+    ident.ready = false;
+    toast('身份过期了，请重新登记', true);
+    showIdentGate();
     return 'denied';
-  }
-  if (isNew && /duplicate key/i.test(msg)) {
-    t.id = uid();                              // 编号撞车，换个新的再来
-    t._cloud = false;
-    return cloudSave(t);
   }
   return 'error';
 }
 
-/** 删云端一条。必须 .select() 拿回受影响的行 —— 见 cloudSave 里的说明 */
+/** 删云端一条。走函数，函数里核对身份 */
 async function cloudDelete(id) {
-  const r = await cloud.db.from('trees').delete().eq('id', id).select('id');
-  if (r.error) return false;
-  return Array.isArray(r.data) && r.data.length > 0;
+  const r = await cloud.db.rpc('erase_tree', {
+    p_name: ident.name, p_pin: ident.pin, p_id: id,
+  });
+  if (r && r.error) return false;
+  const d = Array.isArray(r.data) ? r.data[0] : r.data;
+  if (d && d.ok) return true;
+  if (d && d.reason === 'bad_ident') { ident.ready = false; showIdentGate(); }
+  return false;
 }
 
 /** 把以前存在本机、还没上云的记录补传上去 */
 async function migrateLocalToCloud() {
-  if (!getProject()) return;                   // 没填过邀请码就别打扰
   const locals = state.trees.filter((t) => !t._cloud && !t._localOnly);
   let n = 0;
   for (const t of locals) {
@@ -741,6 +864,43 @@ function renderTrees() {
   for (const t of state.trees) {
     const sp = speciesById(t.species);
     const badge = pinBadge(t);
+    const tip = `<b>${escapeHtml(speciesLabel(t))}</b> · ${escapeHtml(amountText(t))}`
+      + (t.note ? `<br><span style="font-size:11px">${escapeHtml(t.note)}</span>` : '');
+
+    // 点了标记，是记一株新的还是打开这一条？
+    // 「正在选点」时应当在这个位置记一株新的 —— 两株树挨得近时（小苗紧挨大树），
+    // 标记的点击范围有几十米，学生根本点不到空地。
+    const onClick = (e) => {
+      L.DomEvent.stopPropagation(e);
+      if (state.drawingRange) { addDrawPoint(e.latlng); return; }
+      if (state.choosingOnMap) {
+        state.choosingOnMap = false;
+        // 用实际点击的位置，不是标记中心：挨着记的时候，差这几米正好把两株分开
+        const ll = e.originalEvent ? map.mouseEventToLatLng(e.originalEvent) : e.latlng;
+        if (state.repickingPoint && state.draft) {
+          state.repickingPoint = false;
+          state.draft.lat = ll.lat;
+          state.draft.lon = ll.lng;
+          showSheetFrame();
+          return;
+        }
+        openSheet(ll.lat, ll.lng, null);
+        return;
+      }
+      openSheet(t.lat, t.lon, t.id);
+    };
+
+    // 圈过范围的先画那块地，再在中心放标记
+    if (Array.isArray(t.poly) && t.poly.length >= 3) {
+      const poly = L.polygon(t.poly, {
+        color: sp.color, weight: 2,
+        fillColor: sp.color, fillOpacity: 0.28,
+        className: t.id === state.selectedId ? 'range-selected' : '',
+      }).addTo(treeLayer);
+      poly.bindTooltip(tip, { sticky: true });
+      poly.on('click', onClick);
+    }
+
     const pin = L.marker([t.lat, t.lon], {
       icon: L.divIcon({
         className: 'tree-pin' + (t.id === state.selectedId ? ' selected' : ''),
@@ -751,28 +911,8 @@ function renderTrees() {
       }),
       riseOnHover: true,
     });
-    pin.bindTooltip(
-      `<b>${escapeHtml(speciesLabel(t))}</b> · ${escapeHtml(amountText(t))}` +
-      (t.note ? `<br><span style="font-size:11px">${escapeHtml(t.note)}</span>` : ''),
-      { direction: 'top', offset: [0, -24] }
-    );
-    pin.on('click', (e) => {
-      L.DomEvent.stopPropagation(e);
-      // 「正在选点」时点到标记，应当在这个位置记一株新的，
-      // 而不是打开那棵已有的树 —— 两株树挨得近时（小苗紧挨大树），
-      // 标记的点击范围有几十米，学生根本点不到空地。
-      if (state.choosingOnMap) {
-        state.choosingOnMap = false;
-        // 用实际点击的位置，不是标记中心：挨着记的时候，
-        // 差这几米正好把两株分开
-        const ll = e.originalEvent
-          ? map.mouseEventToLatLng(e.originalEvent)
-          : e.latlng;
-        openSheet(ll.lat, ll.lng, null);
-        return;
-      }
-      openSheet(t.lat, t.lon, t.id);
-    });
+    pin.bindTooltip(tip, { direction: 'top', offset: [0, -24] });
+    pin.on('click', onClick);
     pin.addTo(treeLayer);
 
     if (showPhotos && t.photos && t.photos.length) {
@@ -839,8 +979,18 @@ function bindLanAddr() {
    --------------------------------------------------------------- */
 let clickTimer = null;
 function onMapClick(e) {
+  if (state.drawingRange) { addDrawPoint(e.latlng); return; }
   if (!state.choosingOnMap) return;
   state.choosingOnMap = false;
+
+  // 「重选位置」只是挪地方，草稿里已经填好的东西要留着
+  if (state.repickingPoint && state.draft) {
+    state.repickingPoint = false;
+    state.draft.lat = e.latlng.lat;
+    state.draft.lon = e.latlng.lng;
+    showSheetFrame();
+    return;
+  }
   openSheet(e.latlng.lat, e.latlng.lng, null);
 }
 
@@ -897,6 +1047,143 @@ function startPickingOnMap() {
 }
 
 /* ---------------------------------------------------------------
+   圈范围
+
+   草本按面积记，竹丛、成片灌木也有个铺开的地界。只标一个点的话，
+   谁也看不出那片到底铺到哪儿。所以允许在地图上点几个点围出边界，
+   面积自动算好填进去。
+
+   顶点存在记录里的 poly 字段（[[lat, lon], ...]），
+   定位点用这个多边形的中心。
+   --------------------------------------------------------------- */
+let drawPoints = [];      // 画到一半的顶点
+let drawLayer = null;     // 画到一半的图形
+
+/** 多边形面积（平方米）。把经纬度按当地比例折成米，再用鞋带公式 */
+function polyAreaM2(poly) {
+  if (!Array.isArray(poly) || poly.length < 3) return 0;
+  const lat0 = poly.reduce((s, p) => s + p[0], 0) / poly.length;
+  const kx = 111320 * Math.cos(lat0 * Math.PI / 180);   // 这一纬度上 1 经度 ≈ 多少米
+  const ky = 110574;                                    // 1 纬度 ≈ 多少米
+  let a = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const p1 = poly[i];
+    const p2 = poly[(i + 1) % poly.length];
+    a += (p1[1] * kx) * (p2[0] * ky) - (p2[1] * kx) * (p1[0] * ky);
+  }
+  return Math.abs(a / 2);
+}
+
+/** 多边形的中心，用作记录的定位点 */
+function polyCenter(poly) {
+  const n = poly.length || 1;
+  let la = 0, lo = 0;
+  for (const p of poly) { la += p[0] / n; lo += p[1] / n; }
+  return [la, lo];
+}
+
+/** 把表单里现在填着的东西收进草稿。
+
+    「圈范围」和「重选位置」都要暂时收起面板让出屏幕，回来时靠草稿恢复。
+    不先把表单收起来的话，选了树种、填了数量再回来看就全没了 ——
+    因为草稿一直是空的，恢复时会把表单覆盖成空。 */
+function syncDraftFromForm() {
+  const d = state.draft;
+  if (!d) return;
+  d.species = state.pickingSpecies;
+  d.speciesOther = $('f-species-other').value.trim();
+  d.several = state.pickingSeveral;
+  d.health = state.pickingHealth;
+  d.note = $('f-note').value;
+  d.recorder = $('f-recorder').value.trim();
+  d.photos = [...state.pendingPhotos];
+
+  const num = (id) => {
+    const v = parseFloat($(id).value);
+    return isNaN(v) ? null : v;
+  };
+  const cnt = num('f-count');
+  d.count = cnt == null ? 1 : cnt;
+  d.area = num('f-area');
+  d.height = num('f-height');
+  d.dbh = num('f-dbh');
+
+  const la = num('f-lat');
+  const lo = num('f-lon');
+  if (la != null && lo != null) { d.lat = la; d.lon = lo; }
+}
+
+function startDrawRange() {
+  if ($('map3d').style.display !== 'none') setView('2d');
+  syncDraftFromForm();              // 先把已填的收好，回来才不丢
+  drawPoints = ((state.draft && state.draft.poly) || []).map((p) => [p[0], p[1]]);
+  closeSheet(true);                 // 收起面板让出屏幕，草稿留着
+  state.drawingRange = true;
+  if (!drawLayer) drawLayer = L.layerGroup().addTo(map);
+  $('draw-bar').classList.remove('hidden');
+  redrawDraw();
+  toast(drawPoints.length ? '接着点，或直接点「完成」' : '在地图上依次点几个点，围出这片植物的边界');
+}
+
+function redrawDraw() {
+  if (!drawLayer) return;
+  drawLayer.clearLayers();
+  if (drawPoints.length) {
+    if (drawPoints.length >= 3) {
+      L.polygon(drawPoints, {
+        color: '#1b5e20', weight: 2, fillColor: '#66bb6a', fillOpacity: 0.32,
+      }).addTo(drawLayer);
+    } else {
+      L.polyline(drawPoints, { color: '#1b5e20', weight: 2, dashArray: '6,5' }).addTo(drawLayer);
+    }
+    drawPoints.forEach((p, i) => {
+      L.circleMarker(p, {
+        radius: i === 0 ? 7 : 5, color: '#fff', weight: 2,
+        fillColor: i === 0 ? '#1b5e20' : '#2e7d32', fillOpacity: 1,
+      }).addTo(drawLayer);
+    });
+  }
+
+  const n = drawPoints.length;
+  const a = polyAreaM2(drawPoints);
+  $('draw-info').textContent = n < 3
+    ? `已点 ${n} 个点（至少 3 个才能围成范围）`
+    : `${n} 个点 · 约 ${a < 10000 ? a.toFixed(0) + ' 平方米' : (a / 10000).toFixed(2) + ' 公顷'}`;
+  $('draw-done').disabled = n < 3;
+}
+
+function addDrawPoint(latlng) {
+  drawPoints.push([latlng.lat, latlng.lng]);
+  redrawDraw();
+}
+
+function endDraw() {
+  state.drawingRange = false;
+  $('draw-bar').classList.add('hidden');
+  if (drawLayer) { map.removeLayer(drawLayer); drawLayer = null; }
+  drawPoints = [];
+}
+
+function finishDrawRange() {
+  if (drawPoints.length < 3) return;
+  const poly = drawPoints.map((p) => [p[0], p[1]]);
+  const c = polyCenter(poly);
+  state.draft.poly = poly;
+  state.draft.lat = c[0];
+  state.draft.lon = c[1];
+  // 面积按圈出来的算，但表单里还能改 —— 草木不一定铺满整个圈
+  state.draft.area = Math.round(polyAreaM2(poly) * 10) / 10;
+  endDraw();
+  showSheetFrame();
+  toast('范围记下了，面积按圈出的算好了，可以改');
+}
+
+function cancelDrawRange() {
+  endDraw();
+  showSheetFrame();
+}
+
+/* ---------------------------------------------------------------
    编辑抽屉
    --------------------------------------------------------------- */
 function openSheet(lat, lon, id) {
@@ -906,34 +1193,11 @@ function openSheet(lat, lon, id) {
   state.draft = existing
     ? { ...existing }
     : { id: uid(), lat, lon, species: null, count: 1, height: null, dbh: null,
-        health: '良好', note: '', recorder: localStorage.getItem(RECORDER_KEY) || '',
+        several: false, area: null, poly: [], health: '良好', note: '',
+        recorder: ident.name || localStorage.getItem(RECORDER_KEY) || '',
         photos: [], created: Date.now() };
 
-  state.pendingPhotos = [...(state.draft.photos || [])];
-  state.pickingSpecies = state.draft.species;
-  state.pickingHealth = state.draft.health || '良好';
-  state.pickingSeveral = !!state.draft.several;
-  state.spSearch = '';
-  if ($('f-species-search')) $('f-species-search').value = '';
-
-  $('sheet-title').textContent = existing ? '编辑这一处' : '添加一处植物';
-  $('btn-delete').classList.toggle('hidden', !existing);
-  $('f-lat').value = lat.toFixed(6);
-  $('f-lon').value = lon.toFixed(6);
-  $('f-species-other').value = state.draft.speciesOther || '';
-  $('f-note').value = state.draft.note || '';
-  $('f-recorder').value = state.draft.recorder || '';
-
-  loadDraftValues();
-  renderSpeciesGrid();
-  renderHealthChips();
-  renderPhotoPreview();
-  renderCountUI();
-  updateLocHint();
-
-  $('sheet-mask').classList.remove('hidden');
-  $('sheet').classList.remove('hidden');
-  $('sheet').scrollTop = 0;
+  showSheetFrame();
 }
 
 /** 把草稿里的数量/规格回填到表单（换树种后会再调一次） */
@@ -945,13 +1209,72 @@ function loadDraftValues() {
   $('f-dbh').value = state.draft.dbh ?? '';
 }
 
-function closeSheet() {
+function closeSheet(keepDraft) {
   $('sheet-mask').classList.add('hidden');
   $('sheet').classList.add('hidden');
-  state.selectedId = null;
-  state.draft = null;
-  state.pendingPhotos = [];
+  if (!keepDraft) {
+    state.selectedId = null;
+    state.draft = null;
+    state.pendingPhotos = [];
+  }
   renderTrees();
+}
+
+/** 按 state.draft 把面板填好并显示。
+    和 openSheet 分开，是因为「圈范围」要暂时收起面板去地图上画，
+    画完再按原样弹回来，不能把已经填好的内容弄丢。 */
+function showSheetFrame() {
+  const d = state.draft;
+  if (!d) return;
+  const existing = state.selectedId
+    ? state.trees.find((t) => t.id === state.selectedId) : null;
+
+  state.pendingPhotos = [...(d.photos || [])];
+  state.pickingSpecies = d.species;
+  state.pickingHealth = d.health || '良好';
+  state.pickingSeveral = !!d.several;
+  state.spSearch = '';
+  if ($('f-species-search')) $('f-species-search').value = '';
+
+  const editable = canEdit(existing);
+  $('sheet-title').textContent = existing
+    ? (editable ? '编辑这一处' : (existing.recorder ? `${existing.recorder} 记的（只能看）` : '别人记的（只能看）'))
+    : '添加一处植物';
+  // 别人的记录不给删/不给存 —— 数据库本来也会拒，先收起来免得白点
+  $('btn-delete').classList.toggle('hidden', !existing || !editable);
+  $('btn-save').classList.toggle('hidden', !editable);
+  $('f-lat').value = d.lat.toFixed(6);
+  $('f-lon').value = d.lon.toFixed(6);
+  $('f-species-other').value = d.speciesOther || '';
+  $('f-note').value = d.note || '';
+  $('f-recorder').value = d.recorder || '';
+
+  loadDraftValues();
+  renderSpeciesGrid();
+  renderHealthChips();
+  renderPhotoPreview();
+  renderCountUI();
+  renderRangeUI();
+  updateLocHint();
+
+  $('sheet-mask').classList.remove('hidden');
+  $('sheet').classList.remove('hidden');
+  $('sheet').scrollTop = 0;
+}
+
+/** 显示已圈范围的情况 */
+function renderRangeUI() {
+  const poly = (state.draft && state.draft.poly) || [];
+  const el = $('range-hint');
+  if (!el) return;
+  if (poly.length >= 3) {
+    const a = polyAreaM2(poly);
+    el.textContent = `已圈出范围：${a < 10000 ? a.toFixed(0) + ' 平方米' : (a / 10000).toFixed(2) + ' 公顷'}`
+      + `（${poly.length} 个顶点）。点「圈范围」可以重画。`;
+    el.classList.remove('hidden');
+  } else {
+    el.classList.add('hidden');
+  }
 }
 
 function updateLocHint() {
@@ -1137,12 +1460,37 @@ function saveSheet() {
   const lon = parseFloat($('f-lon').value);
   if (isNaN(lat) || isNaN(lon)) return toast('位置无效，请重新选点', true);
 
+  // 离校园很远时提醒一下：数据存得下，但地图上看不到，
+  // 很容易让人以为"记了却没显示"。手机定位偶尔会飘到很远。
+  const ring = campusData && campusData.boundary && campusData.boundary.coordinates[0];
+  if (ring && ring.length) {
+    const clat = ring.reduce((s, c) => s + c[1], 0) / ring.length;
+    const clon = ring.reduce((s, c) => s + c[0], 0) / ring.length;
+    const far = distanceM({ lat, lon }, { lat: clat, lon: clon });
+    if (far > 2000) {
+      const km = far >= 10000 ? Math.round(far / 1000) : (far / 1000).toFixed(1);
+      const goOn = confirm(
+        `这个位置离校园约 ${km} 公里，在地图上找不到它。\n\n`
+        + `多半是手机定位不准。可以点「重选位置」，在地图上手动点。\n\n`
+        + `还是要记在这里吗？`
+      );
+      if (!goOn) return;
+    }
+  }
+
   const cfg = CATEGORY[speciesById(state.pickingSpecies).role] || CATEGORY['待定'];
   const height = parseFloat($('f-height').value);
   const dbh = parseFloat($('f-dbh').value);
   const area = parseFloat($('f-area').value);
   const other = $('f-species-other').value.trim();
   const recorder = $('f-recorder').value.trim();
+  // 记录人是必填：后面要按人统计、要判断这条是谁记的，
+  // 空着的话老师和学生自己都分不清哪条是谁的。
+  if (!recorder) {
+    toast('请填记录人（写你的名字或小组名）', true);
+    $('f-recorder').focus();
+    return;
+  }
   const spPick = state.species.find((s) => s.id === state.pickingSpecies);
   const needText = state.pickingSpecies === 'unknown' || (spPick && spPick.isOther);
   if (needText && !other) {
@@ -1167,6 +1515,8 @@ function saveSheet() {
     count: cfg.count ? Math.max(1, parseInt($('f-count').value, 10) || 1) : null,
     // 面积：只有草本用
     area: cfg.count ? null : (isNaN(area) ? null : area),
+    // 圈出的范围（草本是主要用途，其他类别也可以用来看成片范围）
+    poly: Array.isArray(state.draft.poly) ? state.draft.poly : [],
     // 树高/胸径：只有乔木用
     height: cfg.spec && !isNaN(height) ? height : null,
     dbh: cfg.spec && !isNaN(dbh) ? dbh : null,
@@ -1200,7 +1550,7 @@ function saveSheet() {
       saveTrees();
       renderTrees();
       toast(res === 'denied'
-        ? '这条只存在本机：邀请码不对'
+        ? '这条只存在本机：服务器没接受'
         : '网络不通，先存在本机，稍后自动补传', true);
     });
     return;
@@ -1731,8 +2081,8 @@ function renderStats() {
 function exportCSV() {
   if (!state.trees.length) return toast('还没有数据可导出', true);
   const head = ['记录ID', '类别', '种名', '其他名称', '纬度', '经度',
-                '株数', '丛数', '面积(m2)', '树高(m)', '胸径(cm)',
-                '生长状况', '备注', '记录人', '记录时间', '照片数'];
+                '株数', '丛数', '面积(m2)', '实测面积(m2)', '范围顶点数', '范围坐标',
+                '树高(m)', '胸径(cm)', '生长状况', '备注', '记录人', '记录时间', '照片数'];
   const lines = [head.join(',')];
 
   for (const t of state.trees) {
@@ -1740,6 +2090,12 @@ function exportCSV() {
     const isTree = k === '乔木';
     const isBamboo = k === '竹类';
     const isHerb = k === '草本';
+    const poly = Array.isArray(t.poly) ? t.poly : [];
+    // 圈过范围的，把实测面积和边界坐标一并导出，别人好复核
+    const drawn = poly.length >= 3 ? Math.round(polyAreaM2(poly) * 10) / 10 : '';
+    const wkt = poly.length >= 3
+      ? poly.map((p) => `${p[1].toFixed(6)} ${p[0].toFixed(6)}`).join('; ')
+      : '';
     const row = [
       t.id, CATEGORY[k].short, speciesLabel(t), t.speciesOther || '',
       t.lat.toFixed(6), t.lon.toFixed(6),
@@ -1748,6 +2104,7 @@ function exportCSV() {
         ? (t.several ? '若干' : (t.count || 1)) : '',
       isBamboo ? (t.several ? '若干' : (t.count || 1)) : '',
       isHerb ? (t.several ? '未测' : (t.area ?? '')) : '',
+      drawn, poly.length >= 3 ? poly.length : '', wkt,
       isTree ? (t.height ?? '') : '',
       isTree ? (t.dbh ?? '') : '',
       t.health || '',
@@ -1854,10 +2211,19 @@ function bind() {
   $('btn-delete').addEventListener('click', deleteTree);
 
   $('btn-pick').addEventListener('click', () => {
+    // 保留草稿：只是换个位置，已经填好的树种、数量、备注不能丢
+    syncDraftFromForm();
+    state.repickingPoint = true;
     $('sheet-mask').classList.add('hidden');
     $('sheet').classList.add('hidden');
     startPickingOnMap();
   });
+
+  // 圈范围
+  $('btn-range').addEventListener('click', startDrawRange);
+  $('draw-done').addEventListener('click', finishDrawRange);
+  $('draw-cancel').addEventListener('click', cancelDrawRange);
+  $('draw-undo').addEventListener('click', () => { drawPoints.pop(); redrawDraw(); });
 
   $('f-lat').addEventListener('input', updateLocHint);
   $('f-lon').addEventListener('input', updateLocHint);
@@ -1903,6 +2269,10 @@ function bind() {
       toast('正在定位…请在地图上点选位置，或稍候重试');
     }
   });
+
+  // 登记身份
+  $('btn-ident').addEventListener('click', submitIdent);
+  $('id-pin').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitIdent(); });
 
   $('btn-list').addEventListener('click', () => openPanel('list'));
   $('btn-stats').addEventListener('click', () => openPanel('stats'));
@@ -1988,7 +2358,6 @@ function bind() {
     if (e.key === 'Escape') { closeSheet(); closeAllSheets(); }
   });
 }
-
 /* ---------------------------------------------------------------
    启动
    --------------------------------------------------------------- */
@@ -2004,6 +2373,26 @@ function bind() {
   if (okCloud) {
     renderTrees();
     updateModeBar();
+
+    // 已经登记过的，直接核对一次；没登记过的，弹出来让填
+    const saved = loadIdent();
+    if (saved) {
+      const r = await cloudWhoAmI(saved.name, saved.pin);
+      if (r.ok) {
+        ident.name = saved.name;
+        ident.pin = saved.pin;
+        ident.teacher = !!r.teacher;
+        ident.ready = true;
+        if ($('f-recorder') && !$('f-recorder').value) $('f-recorder').value = saved.name;
+        renderTrees();
+        updateModeBar();
+      } else {
+        localStorage.removeItem(IDENT_KEY);
+        showIdentGate('之前登记的暗号对不上了，重新填一下');
+      }
+    } else {
+      showIdentGate();
+    }
   } else {
     const ok = await initCollab();
     if (!ok) updateModeBar();

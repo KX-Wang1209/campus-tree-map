@@ -354,7 +354,7 @@ function set3DLayerVisible(switchId, on) {
     'ly-sports': ['sports'],
     'ly-water': ['water'],
     'ly-boundary': ['boundary'],
-    'ly-trees': [L.canopy, L.count, L.shadow].filter(Boolean),
+    'ly-trees': [L.area, L.canopy, L.count, L.shadow].filter(Boolean),
   };
   for (const lid of pairs[switchId] || []) {
     if (map3.getLayer(lid)) {
@@ -430,36 +430,53 @@ function polygonCenter(geom) {
 
 /** 把当前树木数据转成 GeoJSON（三维视图用） */
 function buildTreeFeatureCollection() {
-  const feats = state.trees.map((t) => {
+  const feats = [];
+  for (const t of state.trees) {
     const sp = speciesById(t.species);
     const cfg = CATEGORY[categoryOf(t)];
     // 有实测树高就用，没有就按默认，让体量感更真实
     const h = t.height || 6;
     // 大灌木、竹丛比乔木矮，尺寸上区分一下，不然三维里全一样高
     const hEff = cfg.spec ? h : (sp.role === '竹类' ? 5 : 2.2);
-    return {
+    const base = {
+      id: t.id,
+      name: speciesLabel(t),
+      rawSpecies: t.species,
+      speciesOther: t.speciesOther || '',
+      color: sp.color,
+      count: t.several ? 0 : (cfg.count ? (t.count || 1) : 0),
+      several: !!t.several,
+      amount: amountText(t),
+      category: cfg.short,
+      note: t.note || '',
+      height: t.height || null,
+      dbh: t.dbh || null,
+      recorder: t.recorder || '',
+      dim: false,
+    };
+
+    // 圈过范围的，画一块地
+    if (Array.isArray(t.poly) && t.poly.length >= 3) {
+      feats.push({
+        type: 'Feature',
+        geometry: {
+          type: 'Polygon',
+          coordinates: [[...t.poly.map((p) => [p[1], p[0]]), [t.poly[0][1], t.poly[0][0]]]],
+        },
+        properties: { ...base, kind: 'area' },
+      });
+    }
+
+    feats.push({
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [t.lon, t.lat] },
       properties: {
-        id: t.id,
-        name: speciesLabel(t),
-        rawSpecies: t.species,        // 筛选时要用原始 id 判断
-        speciesOther: t.speciesOther || '',
-        color: sp.color,
-        // 株数/丛数：草本没有，「若干」记 0（不参与数量角标）
-        count: t.several ? 0 : (cfg.count ? (t.count || 1) : 0),
-        several: !!t.several,
-        amount: amountText(t),        // 用于弹窗显示（面积带单位）
-        category: cfg.short,
-        note: t.note || '',
-        height: t.height || null,
-        dbh: t.dbh || null,
-        recorder: t.recorder || '',
+        ...base,
+        kind: 'pin',
         r: Math.max(3, Math.min(9, hEff * 0.55)),   // 树冠半径随体量变
-        dim: false,                   // 被筛选掉时为 true（变暗变小）
       },
-    };
-  });
+    });
+  }
   return { type: 'FeatureCollection', features: feats };
 }
 
@@ -497,7 +514,10 @@ function bindTreeEvents(map3) {
   if (map3._treeEventsBoundFor === L.canopy) return;   // 这组图层已经绑过了
   map3._treeEventsBoundFor = L.canopy;
 
-  map3.on('click', L.canopy, (e) => {
+  // 点色块和点圆点都给同样的弹窗。
+  // 用 e.lngLat（点击处）而不是 f.geometry.coordinates ——
+  // 面要素的 coordinates 是嵌套数组，直接传进去弹窗会算错位置。
+  const openPopup = (e) => {
     const f = e.features && e.features[0];
     if (!f) return;
     const p = f.properties;
@@ -505,9 +525,10 @@ function bindTreeEvents(map3) {
     if (p.note) bits.push(p.note);
     if (p.height) bits.push(`高 ${p.height} 米`);
     if (p.dbh) bits.push(`胸径 ${p.dbh} 厘米`);
+    if (p.kind === 'area') bits.push('圈过范围');
     if (p.recorder) bits.push(`记录人 ${p.recorder}`);
     new maplibregl.Popup({ closeButton: true, maxWidth: '260px' })
-      .setLngLat(f.geometry.coordinates)
+      .setLngLat(e.lngLat)
       .setHTML(
         `<div style="font-family:inherit">
            <div style="font-weight:650;font-size:14px">${escapeHtml(p.name || '植物')}
@@ -517,9 +538,12 @@ function bindTreeEvents(map3) {
          </div>`
       )
       .addTo(map3);
-  });
-  map3.on('mouseenter', L.canopy, () => { map3.getCanvas().style.cursor = 'pointer'; });
-  map3.on('mouseleave', L.canopy, () => { map3.getCanvas().style.cursor = ''; });
+  };
+
+  const clickable = [L.canopy, L.area].filter(Boolean);
+  map3.on('click', clickable, openPopup);
+  map3.on('mouseenter', clickable, () => { map3.getCanvas().style.cursor = 'pointer'; });
+  map3.on('mouseleave', clickable, () => { map3.getCanvas().style.cursor = ''; });
 }
 
 /** 加树的三个图层。图层名带序号，避免复用被删过的名字（原因见 rebuildTreeSource） */
@@ -527,11 +551,27 @@ function addTreeLayers(map3, srcId, seq) {
   srcId = srcId || VIEW3D.treeSourceId;
   seq = seq || ++treeSourceSeq;
   const L = {
+    area: `tarea_${seq}`,
     shadow: `tshadow_${seq}`,
     canopy: `tcanopy_${seq}`,
     count: `tcount_${seq}`,
   };
   VIEW3D.treeLayers = L;
+
+  // 圈出的范围：铺一块半透明色块。
+  // 必须加在最底下，否则会盖住树冠的圆点。
+  // 圆点图层只画点几何，所以色块和圆点可以共用同一个数据源。
+  map3.addLayer({
+    id: L.area,
+    type: 'fill',
+    source: srcId,
+    filter: ['==', ['get', 'kind'], 'area'],
+    paint: {
+      'fill-color': ['get', 'color'],
+      'fill-opacity': ['case', ['get', 'dim'], 0.08, 0.3],
+      'fill-outline-color': ['get', 'color'],
+    },
+  });
 
   // 脚下阴影
   map3.addLayer({

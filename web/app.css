@@ -396,6 +396,29 @@ html, body {
 .hint { margin: 5px 0 0; font-size: 11.5px; color: var(--ink-2); line-height: 1.5; }
 
 .coord-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 7px; }
+/* 多出来的「圈范围」按钮换行放，不挤坏经纬度两个框 */
+.coord-row #btn-range { grid-column: 3; }
+
+/* 在动笔画范围时浮在底部，别被面板挡住 */
+#draw-bar {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: 92px; z-index: 1500;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  justify-content: center;
+  background: rgba(27, 94, 32, .95); color: #fff;
+  padding: 9px 13px; border-radius: 14px;
+  box-shadow: var(--shadow-lg); max-width: calc(100vw - 24px);
+}
+#draw-info { font-size: 12.5px; }
+.db-actions { display: flex; gap: 6px; }
+#draw-bar .btn.tiny {
+  background: rgba(255,255,255,.18); color: #fff;
+  border: 1px solid rgba(255,255,255,.34); min-height: 34px;
+}
+#draw-bar .btn.tiny.primary {
+  background: #fff; color: #1b5e20; border-color: #fff; font-weight: 650;
+}
+#draw-bar .btn.tiny:disabled { opacity: .45; }
 
 /* 树种选择网格 */
 .species-grid {

@@ -6,7 +6,9 @@
 <title>天津滨海职业学院 · 校园植物地图</title>
 <link rel="stylesheet" href="vendor/leaflet.css">
 <link rel="stylesheet" href="vendor/maplibre-gl.css">
-<link rel="stylesheet" href="app.css">
+<!-- ?v=N 是防缓存：改了下面这些文件就把数字加一，
+     否则学生手机（尤其微信）会一直用旧的缓存副本 -->
+<link rel="stylesheet" href="app.css?v=4">
 </head>
 <body>
 
@@ -16,7 +18,6 @@
     <span class="brand-mark">🌳</span>
     <div>
       <h1>天津滨海职业学院 · 校园植物地图</h1>
-      <p id="subtitle">老校区纪念版</p>
     </div>
   </div>
   <div class="topbar-actions">
@@ -94,8 +95,10 @@
         <input id="f-lat" type="text" inputmode="decimal" placeholder="纬度">
         <input id="f-lon" type="text" inputmode="decimal" placeholder="经度">
         <button id="btn-pick" class="btn tiny" title="回到地图重新选点">📍 重选</button>
+        <button id="btn-range" class="btn tiny" title="在地图上圈出这片的范围">▱ 圈范围</button>
       </div>
       <p class="hint" id="loc-hint">在地图上点选位置，或直接输入坐标</p>
+      <p class="hint" id="range-hint" class="hidden"></p>
     </div>
 
     <!-- 种类 -->
@@ -160,8 +163,8 @@
     </div>
 
     <div class="field">
-      <label>记录人</label>
-      <input id="f-recorder" type="text" placeholder="你的名字（选填，便于溯源）">
+      <label>记录人 <span class="req">*</span></label>
+      <input id="f-recorder" type="text" placeholder="填一次就会记住，下次不用再填">
     </div>
   </div>
 
@@ -207,6 +210,33 @@
   <div id="stats-body" class="stats-body"></div>
 </section>
 
+<!-- ============ 登记身份 ============ -->
+<div id="ident-mask" class="mask hidden"></div>
+<section id="ident-panel" class="sheet hidden">
+  <div class="sheet-handle"></div>
+  <div class="sheet-head">
+    <h2>先登记一下</h2>
+  </div>
+  <div class="sheet-body">
+    <p class="hint" style="margin-top:0">
+      填一次就记住了，这台设备以后不用再填。记录会归到你名下，
+      所以别人改不了你的，你换手机也找得回来。
+    </p>
+    <div class="field">
+      <label>你的名字 <span class="req">*</span></label>
+      <input id="id-name" type="text" placeholder="真名或小组名，会显示在每棵树上">
+    </div>
+    <div class="field">
+      <label>暗号（4 位以上） <span class="req">*</span></label>
+      <input id="id-pin" type="text" inputmode="numeric" placeholder="自己记牢的数字，别人猜不到就行">
+    </div>
+    <p class="hint" id="id-msg" style="min-height:18px;color:var(--danger)"></p>
+  </div>
+  <div class="sheet-foot">
+    <button id="btn-ident" class="btn primary">开始记录</button>
+  </div>
+</section>
+
 <!-- ============ 合并确认弹窗 ============ -->
 <div id="merge-mask" class="mask hidden"></div>
 <section id="merge-panel" class="sheet hidden">
@@ -235,33 +265,69 @@
     <button id="help-close" class="icon-btn">✕</button>
   </div>
   <div class="help-body">
-    <h3>给做记录的同学</h3>
-    <ol>
-      <li><b>站到植物旁边</b>，等手机定位稳定（地图上蓝点不动了）。</li>
-      <li>点底部 <b>「＋ 记录身边的植物」</b>，会自动用你当前位置。</li>
-      <li>选种类。不认识就点 <b>「暂不确定」</b>，先记位置，
-          回头查了再补——<b>位置比种名重要</b>。</li>
-      <li><b>不同类别要填的东西不一样</b>：乔木填株数、树高、胸径；
-          灌木写株数；草本写面积；竹类写丛数。表格会自动变，不用你选。</li>
-      <li>拍张照，写句备注。<b>照片是最有用的证据。</b></li>
-    </ol>
-    <p class="tip">
-      💡 <b>没有网络也能用。</b>地图和物种表都存在手机里了。
-      每记一条会立刻存到手机本地，不会因为关掉网页而丢失。
-      回到有网的地方再导出就行。
+    <h3>第一次打开：先登记一下</h3>
+    <p>
+      会让你填 <b>名字</b> 和 <b>一个 4 位以上的暗号</b>。填一次就记住了，
+      这台设备以后不再问。
+    </p>
+    <p>
+      为什么要填：记录会归到这个名字下面，所以<b>别人改不了你的</b>；
+      哪天换了手机、或者清了浏览器缓存，重新填一次同样的名字和暗号，
+      就能把以前记的找回来。
     </p>
     <p class="tip">
-      ⚠️ <b>注意事项</b>：每条记录都重新点一次「＋」再选位置，
-      不要一直用同一个位置加；成片同种的可以合并成一条，填总量。
-      数量数不清就点 <b>「若干」</b>，不要硬编一个数字。
+      💡 名字写你真名或小组名都行。暗号自己记牢，别用 1234 这种。
+      名字若已被别人用过，暗号对不上会提示你换个名字（比如加上姓）。
     </p>
 
-    <h3>给演示的人</h3>
+    <h3>记录一棵树</h3>
+    <ol>
+      <li><b>站到植物旁边</b>，等地图上的蓝点稳定下来（别在走动时记）。</li>
+      <li>点底部 <b>「＋ 记录身边的植物」</b>，会自动用你当前位置。
+          定位不准就点 <b>「重选位置」</b>，直接在地图上点一下。</li>
+      <li>选种类。不认识就点 <b>「暂不确定」</b>，先记位置，回头查了再补——
+          <b>位置比种名重要</b>。</li>
+      <li><b>不同类别要填的不一样</b>：乔木填株数、树高、胸径；灌木写株数；
+          草本写面积；竹类写丛数。表单会自动变，不用你选。</li>
+      <li>写句备注（比如「靠三号楼东侧」），方便以后核对。</li>
+      <li><b>面积说不清的，直接圈出来。</b>点「▱ 圈范围」，在地图上
+          依次点几个点围住那片地，面积会自动算好填进去，地图上也会显示那块范围。
+          草本最该这么记；成片的灌木、竹丛也可以用。</li>
+    </ol>
+    <p class="tip">
+      💡 <b>圈范围怎么操作</b>：点「▱ 圈范围」面板会暂时收起 →
+      在地图上点第一个点，<b>再点第二个、第三个</b>，至少 3 个点才能围成面 →
+      点「完成」。点错了按「撤销」退掉上一个点，不想画了点「取消」。
+      面积会自动填上，但可以手动改——<b>实际种的不一定铺满整个圈</b>。
+    </p>
+    <p class="tip">
+      ⚠️ <b>三个容易出错的地方</b>：<br>
+      · 每记一处都重新点一次「＋」，别一直用同一个位置往下加；<br>
+      · 成片同种的树可以合成一条，填总数量；<br>
+      · 数量数不清就点 <b>「若干」</b>，不要随便编一个数字。
+    </p>
+
+    <h3>数据存在哪、谁能改</h3>
     <ul>
-      <li>「统计」看各类构成和总量，「清单」可以导出 CSV 交给老师。</li>
-      <li>所有数据都存在你自己的浏览器里，换电脑/换浏览器就看不到了，
-          记得用 <b>「备份 JSON」</b> 保存。</li>
-      <li>底图是 2025 年 5 月的卫星影像，校园西南角当时还在施工。</li>
+      <li>记录会<b>自动传到云端</b>，不用导出、不用汇总。
+          别人记的过几秒就会出现在你的地图上。</li>
+      <li>所有人<b>都能看</b>全部记录；但只能<b>改和删自己记的</b>。
+          点到别人记的树，面板会显示「某某记的（只能看）」。</li>
+      <li>老师能改删任何记录（用来清理错记的数据）。</li>
+      <li><b>没有信号也能记</b>：先存在手机里，等有网了自动补传，
+          状态栏会显示还有几条待上传。</li>
+    </ul>
+    <p class="tip">
+      📷 <b>照片暂时只存在你自己手机里</b>，没有跟着记录上传。
+      所以别人在另一台设备上看不到你拍的照片。
+      现在照片的作用是留个底、自己核对用。
+    </p>
+
+    <h3>给老师</h3>
+    <ul>
+      <li>「清单」可以导出 CSV（含全部记录），直接在 Excel 里打开。</li>
+      <li>「统计」看各类构成和总量，汇报时可直接截屏。</li>
+      <li>学生记错了、记重了，你自己登录后就能删——不用再跑数据库。</li>
     </ul>
 
     <h3>关于数据来源</h3>
@@ -269,7 +335,7 @@
       底图：Esri World Imagery，<b>2025 年 5 月 20 日</b>拍摄，0.34 米分辨率<br>
       建筑轮廓：OpenStreetMap（ODbL 许可）<br>
       物种库：学校《校园植物名录（26年10月）》，共 65 种<br>
-      植物数据：由师生实地记录，保存在本地
+      植物数据：由师生实地记录，存在腾讯云开发（上海）
     </p>
     <p class="tip">
       📅 <b>底图为什么是 2025 年 5 月的？</b>
@@ -287,6 +353,16 @@
   <button id="fab-add" class="fab primary">＋ 记录身边的植物</button>
 </div>
 
+<!-- ============ 圈范围时的浮动条 ============ -->
+<div id="draw-bar" class="hidden">
+  <span id="draw-info">在地图上依次点几个点</span>
+  <div class="db-actions">
+    <button id="draw-undo" class="btn tiny">撤销</button>
+    <button id="draw-cancel" class="btn tiny">取消</button>
+    <button id="draw-done" class="btn tiny primary">完成</button>
+  </div>
+</div>
+
 <!-- 轻提示 -->
 <div id="toast" class="toast hidden"></div>
 
@@ -294,7 +370,7 @@
 <script src="vendor/cloudbase.js?v=3.10.1"></script>
 <script src="vendor/leaflet.js"></script>
 <script src="vendor/maplibre-gl.js"></script>
-<script src="view3d.js"></script>
-<script src="app.js"></script>
+<script src="view3d.js?v=4"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>
