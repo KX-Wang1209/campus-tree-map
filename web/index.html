@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="vendor/maplibre-gl.css">
 <!-- ?v=N 是防缓存：改了下面这些文件就把数字加一，
      否则学生手机（尤其微信）会一直用旧的缓存副本 -->
-<link rel="stylesheet" href="app.css?v=7">
+<link rel="stylesheet" href="app.css?v=8">
 </head>
 <body>
 
@@ -320,9 +320,11 @@
           状态栏会显示还有几条待上传。</li>
     </ul>
     <p class="tip">
-      📷 <b>照片暂时只存在你自己手机里</b>，没有跟着记录上传。
-      所以别人在另一台设备上看不到你拍的照片。
-      现在照片的作用是留个底、自己核对用。
+      📷 <b>照片会跟着记录一起上传</b>，每条最多 3 张。
+      上传前会自动压小（约 150KB），所以不费你的流量。<br>
+      老师和同学<b>都能看到你拍的照片</b>——点开那条记录就会显示。<br>
+      地图和清单上只会出现一个小 <b>📷</b> 角标，<b>不会自动下载照片</b>，
+      要点开某条记录才去取图。这是为了省流量，手机上也更快。
     </p>
 
     <h3>给老师</h3>
@@ -372,7 +374,7 @@
 <script src="vendor/cloudbase.js?v=3.10.1"></script>
 <script src="vendor/leaflet.js"></script>
 <script src="vendor/maplibre-gl.js"></script>
-<script src="view3d.js?v=7"></script>
-<script src="app.js?v=7"></script>
+<script src="view3d.js?v=8"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>

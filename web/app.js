@@ -931,20 +931,6 @@ function summarize(list) {
 }
 
 /** 一行文字概括各类合计，只列有数据的 */
-function summaryLine(list) {
-  const { sums, several } = summarize(list);
-  const parts = [];
-  for (const k of ['乔木', '灌木或藤木', '草本', '竹类', '待定']) {
-    const v = sums[k], n = several[k];
-    if (!v && !n) continue;
-    const cfg = CATEGORY[k];
-    let s = cfg.count ? `${v} ${cfg.unit}` : `${v} m²`;
-    if (n) s += ` + ${n} 处${cfg.count ? '若干' : '未测'}`;
-    parts.push(`${cfg.short} ${s}`);
-  }
-  return parts.join(' · ');
-}
-
 function renderTrees() {
   treeLayer.clearLayers();
   photoLayer.clearLayers();
@@ -1015,27 +1001,35 @@ function renderTrees() {
   syncTrees3D();          // 三维开着的话立刻同步
 }
 
+/* 底部这条只用来说「现在是什么模式、记了多少、有没有没传上去的」。
+   分类明细在「统计」面板里，这里重复一遍会让它在手机上折成好几行、
+   把地图挡掉一大块。 */
 function updateModeBar() {
-  const line = summaryLine(state.trees);
-  const stat = state.trees.length ? `已记 ${state.trees.length} 条 · ${line}` : '';
+  const n = state.trees.length;
+  const cnt = n ? ` · ${n} 条` : '';
+
   if (cloud.enabled) {
-    // 云端模式：网页发出去，学生用谁的网都行
     const pendingN = state.trees.filter((t) => !t._cloud && !t._localOnly).length;
-    const pending = pendingN ? ` · <span style="color:#e65100">${pendingN} 条待上传</span>` : '';
-    $('mode-text').innerHTML = `☁️ 云端协作中${stat ? ' · ' + stat : ''}${pending}`;
+    const pending = pendingN
+      ? ` · <span class="mb-warn">${pendingN} 条待上传</span>` : '';
+    $('mode-text').innerHTML = `☁️ 云端协作${cnt}${pending}`;
     return;
   }
+
   if (collab.enabled) {
     const who = collab.online > 1 ? ` · ${collab.online} 人在线` : '';
     // 局域网地址一直显示，老师任何时候都能看到该发什么给学生
     const share = serverInfo.lan
       ? ` · <span id="lan-addr" title="点一下复制，发给学生">📱 ${escapeHtml(serverInfo.lan)}</span>`
       : '';
-    $('mode-text').innerHTML = `🟢 实时协作中${who}${stat ? ' · ' + stat : ''}${share}`;
+    $('mode-text').innerHTML = `🟢 实时协作${who}${cnt}${share}`;
     bindLanAddr();
     return;
   }
-  $('mode-text').textContent = stat || '点地图上的位置，即可记录一处植物';
+
+  $('mode-text').textContent = n
+    ? `已记 ${n} 条 · 点地图上的位置继续添加`
+    : '点地图上的位置，即可记录一处植物';
 }
 
 /** 让状态栏里的局域网地址可以点一下就复制 */
