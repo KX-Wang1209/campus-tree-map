@@ -358,12 +358,20 @@ function canDelete(t) {
 
 function isTeacher() { return ident.role === 'teacher'; }
 
-/** 按名字取成员（用于成员管理面板） */
+/** 取成员名单。走服务器函数，函数里先核对"你是老师"——
+   owners 表本身不给公开读，不然知道网址的人就能看到全部学生姓名。 */
 async function cloudListMembers() {
-  const r = await cloud.db.from('owners').select('name,role,created_at')
-    .order('created_at', { ascending: true });
-  if (r.error) return { ok: false, msg: r.error.message, list: [] };
-  return { ok: true, list: r.data || [] };
+  const r = await cloud.db.rpc('list_members', {
+    p_name: ident.name, p_pin: ident.pin,
+  });
+  if (r && r.error) return { ok: false, msg: r.error.message, list: [] };
+  const d = Array.isArray(r.data) ? r.data[0] : r.data;
+  if (!d) return { ok: false, msg: '', list: [] };
+  if (!d.ok) {
+    const why = d.reason === 'not_teacher' ? '只有老师能看成员名单' : '身份已失效，请重新登记';
+    return { ok: false, msg: why, list: [] };
+  }
+  return { ok: true, list: d.list || [] };
 }
 
 /** 老师：加人 / 改角色 / 重置暗号，都走数据库函数核对身份 */
