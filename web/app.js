@@ -16,9 +16,8 @@ const state = {
   selectedId: null,   // 当前编辑的记录 id
   draft: null,        // 正在编辑（尚未保存）的数据
   pendingPhotos: [],  // 正在编辑的照片 dataURL 列表
-  pickingSpecies: null,
+  editingItem: null,  // 正在挑选树种的条目序号（null = 没在挑）
   pickingHealth: '良好',
-  pickingSeveral: false,   // 数量选「若干」
   spSearch: '',            // 树种搜索词
   spCollapsed: new Set(['灌木或藤木', '草本', '竹类']),  // 默认折起的组
   choosingOnMap: false,
@@ -85,6 +84,8 @@ function loadTrees() {
     const raw = localStorage.getItem(STORE_KEY);
     state.trees = raw ? JSON.parse(raw) : [];
     if (!Array.isArray(state.trees)) state.trees = [];
+    // 老记录只有单个树种，读进来就地补成 items，后面各处只管读 items
+    state.trees.forEach(normalizeRecord);
   } catch (e) {
     console.error('读取本地数据失败', e);
     state.trees = [];
@@ -264,26 +265,32 @@ const CLOUD_POLL_MS = 15000;
 // 明确列出要读的列，故意不写 * —— 库里有几列（比如建库时那个邀请码）
 // 没给读权限，用 select('*') 会被数据库直接拒绝。
 const CLOUD_COLS = 'id,owner_id,owner_name,lat,lon,species,species_other,several,qty,area,'
-  + 'poly,height,dbh,health,note,recorder,photo_count,photos,created_at,updated_at';
+  + 'poly,items,height,dbh,health,note,recorder,photo_count,photos,created_at,updated_at';
 
 // 数据库还没加 poly 列时的退路。加了以后会自动用上面那份。
 const CLOUD_COLS_OLD = 'id,owner_id,owner_name,lat,lon,species,species_other,several,qty,area,'
   + 'height,dbh,health,note,recorder,photo_count,photos,created_at,updated_at';
 
+// 更老：连 items 也没有（这次改造之前建的库）
+const CLOUD_COLS_NO_ITEMS = 'id,owner_id,owner_name,lat,lon,species,species_other,several,qty,area,'
+  + 'poly,height,dbh,health,note,recorder,photo_count,photos,created_at,updated_at';
+
 /* ---------------------------------------------------------------
-   实名登记
+   登记身份
 
    进站填一次「名字 + 暗号」，之后：
      · 记录归到这个名下（换设备、清缓存也找得回来）
-     · 只能改删自己名下和本机还没上传的记录
-     · 老师（在库里标记过）能改删任何记录
+     · 学生只能改删自己名下的记录
+     · 老师能改删任何记录，还能管成员名单
+     · 没登记的人 = 访客，只能看
 
-   名字是自己填的，不是手机号那种实名认证 —— 用途是"分清谁记的"，
+   名字是名册里的名字，不是手机号那种实名认证 —— 用途是"分清谁记的"，
    不是证明身份。暗号只存 md5，别人读不到。
    --------------------------------------------------------------- */
 const IDENT_KEY = 'tjbpi_ident_v1';
 
-const ident = { name: '', pin: '', teacher: false, ready: false };
+// role: 'teacher' | 'student' | 'guest'（没登记）
+const ident = { name: '', pin: '', role: 'guest', ready: false };
 
 function loadIdent() {
   try {
@@ -298,22 +305,76 @@ function saveIdent(name, pin) {
   localStorage.setItem(IDENT_KEY, JSON.stringify({ name, pin }));
 }
 
-/** 向服务器核对身份。名字没登记过就当场登记，登记过就要对暗号 */
+/** 角色的中文说法，给界面和提示用 */
+const ROLE_TEXT = { teacher: '老师', student: '学生', guest: '访客' };
+
+/** 退出登记 —— 变回访客，只能看 */
+function forgetIdent() {
+  ident.name = ''; ident.pin = ''; ident.role = 'guest'; ident.ready = false;
+  localStorage.removeItem(IDENT_KEY);
+  updateMeButton();
+  applyRoleUI();
+}
+
+/** 向服务器核对身份。不在名册里、暗号不对，都算没通过 */
 async function cloudWhoAmI(name, pin) {
   const r = await cloud.db.rpc('who_am_i', { p_name: name, p_pin: pin });
   if (r && r.error) return { ok: false, reason: 'error', msg: r.error.message };
   const d = r && r.data;
   const o = Array.isArray(d) ? d[0] : d;
   if (!o) return { ok: false, reason: 'empty' };
-  return { ok: !!o.ok, reason: o.reason || '', teacher: !!o.teacher, created: !!o.created };
+  return {
+    ok: !!o.ok,
+    reason: o.reason || '',
+    role: o.role || (o.teacher ? 'teacher' : 'student'),
+    created: !!o.created,
+  };
 }
 
-/** 这条能不能改？云端的只有自己的（或老师）能改 */
+/* ---------------------------------------------------------------
+   三级权限
+
+     teacher  赵老师 —— 能改删任何记录，还能管成员名单
+     student  名册里的学生 —— 能添加，能改删自己名下的
+     guest    没登记的人 —— 只能看
+
+   名册在数据库的 owners 表里，只有老师能加人。
+   没在名册里的人进不来，所以「不认识的人」自然是访客。
+   --------------------------------------------------------------- */
+
+/** 这一条能不能改？访客一律只读 */
 function canEdit(t) {
-  if (!t) return true;            // 正在新建
-  if (!t._cloud) return true;     // 还在本机
-  if (ident.teacher) return true; // 老师能管所有
+  if (!canWrite()) return false;    // 访客：什么都不能改，本机残留的也不行
+  if (!t) return true;              // 正在新建
+  if (!t._cloud) return true;       // 还在本机、没归属
+  if (ident.role === 'teacher') return true;
   return t.ownerName === ident.name;
+}
+
+/** 这一条能不能删？和能不能改一致 */
+function canDelete(t) {
+  return canEdit(t);
+}
+
+function isTeacher() { return ident.role === 'teacher'; }
+
+/** 按名字取成员（用于成员管理面板） */
+async function cloudListMembers() {
+  const r = await cloud.db.from('owners').select('name,role,created_at')
+    .order('created_at', { ascending: true });
+  if (r.error) return { ok: false, msg: r.error.message, list: [] };
+  return { ok: true, list: r.data || [] };
+}
+
+/** 老师：加人 / 改角色 / 重置暗号，都走数据库函数核对身份 */
+async function cloudMemberOp(op, name, extra) {
+  const r = await cloud.db.rpc('manage_member', {
+    p_name: ident.name, p_pin: ident.pin,
+    p_op: op, p_target: name, p_arg: extra == null ? null : String(extra),
+  });
+  if (r && r.error) return { ok: false, msg: r.error.message };
+  const d = Array.isArray(r.data) ? r.data[0] : r.data;
+  return d || { ok: false, reason: 'empty' };
 }
 
 /** 弹出"你是谁"，挡住后面的操作 */
@@ -344,24 +405,59 @@ async function submitIdent() {
   const r = await cloudWhoAmI(name, pin);
   if (!r.ok) {
     msg.textContent = r.reason === 'wrong_pin'
-      ? '这个名字已经有人用了，暗号不对。换个暗号，或把名字改一下（比如加个姓）'
-      : '没连上服务器，稍后再试';
+      ? '暗号不对，再试一次'
+      : r.reason === 'not_member'
+        ? '这个名字不在成员名单里。让赵老师先在「成员」里把你加上'
+        : '没连上服务器，稍后再试';
     return false;
   }
 
   ident.name = name;
   ident.pin = pin;
-  ident.teacher = !!r.teacher;
+  ident.role = r.role || 'guest';
   ident.ready = true;
   saveIdent(name, pin);
   hideIdentGate();
+  updateMeButton();
+  applyRoleUI();
 
   // 记录人跟着身份走，省得每棵树都填一遍
   if ($('f-recorder')) $('f-recorder').value = name;
   renderTrees();
   updateModeBar();
-  toast(r.created ? `欢迎，${name}` : `欢迎回来，${name}`);
+  toast(`欢迎回来，${name}（${ROLE_TEXT[ident.role] || ''}）`);
   return true;
+}
+
+/* ---------------------------------------------------------------
+   界面跟着角色变
+
+    访客看不到「＋ 记录」「成员」这些用不上的东西，
+    免得点进去了才发现没权限。
+   --------------------------------------------------------------- */
+function updateMeButton() {
+  const el = $('me-text');
+  if (!el) return;
+  el.textContent = ident.ready ? `${ident.name}·${ROLE_TEXT[ident.role] || ''}` : '登记';
+  const b = $('btn-me');
+  if (b) b.title = ident.ready
+    ? `当前身份：${ident.name}（${ROLE_TEXT[ident.role]}）。点一下可以换人`
+    : '登记名字和暗号';
+}
+
+function applyRoleUI() {
+  const teacher = isTeacher();
+  // 成员管理只有老师能进
+  if ($('btn-members')) $('btn-members').classList.toggle('hidden', !teacher);
+  // 访客不能记录
+  const canRecord = canWrite();
+  if ($('fab-add')) $('fab-add').classList.toggle('hidden', !canRecord);
+}
+
+/** 现在这个人能不能往地图里写东西 */
+function canWrite() {
+  if (!cloud.enabled) return true;     // 局域网/纯本地模式：没有名册这一说
+  return ident.ready && (ident.role === 'student' || ident.role === 'teacher');
 }
 
 const cloud = {
@@ -373,11 +469,12 @@ const cloud = {
   lastMax: 0,        // 已经同步到的最大时间戳
   timer: null,
   busy: false,
+  hasItems: false,   // 数据库有没有 items 列（一处多树种）
 };
 
 /** 云端的一行 → 页面里用的记录 */
 function rowToTree(r) {
-  return {
+  return normalizeRecord({
     id: r.id,
     lat: r.lat, lon: r.lon,
     species: r.species,
@@ -388,6 +485,7 @@ function rowToTree(r) {
     poly: Array.isArray(r.poly) ? r.poly : [],
     height: r.height,
     dbh: r.dbh,
+    items: Array.isArray(r.items) ? r.items : null,
     health: r.health || '',
     note: r.note || '',
     recorder: r.recorder || '',
@@ -398,22 +496,25 @@ function rowToTree(r) {
     _cloud: true,
     ownerId: r.owner_id || null,
     ownerName: r.owner_name || '',
-  };
+  });
 }
 
 /** 能写进数据库的字段。故意不含 id 和 created_at —— 这两列数据库不给改，
     带上它们整条更新都会被拒（实测过） */
 function treeFields(t) {
+  const first = itemsOf(t)[0] || {};
   const f = {
     lat: t.lat, lon: t.lon,
-    species: t.species,
-    species_other: t.speciesOther || '',
-    several: !!t.several,
-    qty: t.count ?? null,
-    area: t.area ?? null,
+    // 老列留着：第 1 条镜像一份，旧客户端和旧导出还认这些字段
+    species: first.species || 'unknown',
+    species_other: first.speciesOther || '',
+    several: !!first.several,
+    qty: first.count ?? null,
+    area: first.area ?? null,
     poly: Array.isArray(t.poly) ? t.poly : [],
-    height: t.height ?? null,
-    dbh: t.dbh ?? null,
+    height: first.height ?? null,
+    dbh: first.dbh ?? null,
+    items: itemsOf(t),
     health: t.health || '',
     note: t.note || '',
     recorder: t.recorder || '',
@@ -424,7 +525,16 @@ function treeFields(t) {
   };
   // 数据库还没加这一列时不发它 —— 带上不存在的列，整条写入都会失败
   if (!(cloud.cols || '').includes('poly')) delete f.poly;
+  if (!(cloud.cols || '').includes('items')) delete f.items;
   return f;
+}
+
+/** 这一条能不能安全地上传？
+    数据库还没有 items 列时，多种植物的记录会被压成只剩第 1 种 ——
+    上传等于把数据弄丢，所以这种记录先只留本机。 */
+function canUploadSafely(t) {
+  if (!cloud.hasItems && itemsOf(t).length > 1) return false;
+  return true;
 }
 
 /** 用到的整行（含 id / created_at / 归属人） */
@@ -446,12 +556,16 @@ async function initCloud() {
     const probe = await db.from('sync_state').select('version').limit(1);
     if (probe.error) return false;
 
-    // 数据库有没有「范围」那一列？老库没有。
+    // 数据库有没有「范围」「多树种」这两列？老库没有。
     // 不做这一步的话，列清单里带上不存在的列会让整条查询失败，
     // 页面上一棵树都显示不出来。
     const probePoly = await db.from('trees').select('poly').limit(1);
-    cloud.cols = probePoly.error ? CLOUD_COLS_OLD : CLOUD_COLS;
+    const probeItems = probePoly.error ? { error: true } : await db.from('trees').select('items').limit(1);
+    cloud.cols = probePoly.error ? CLOUD_COLS_OLD
+      : (probeItems.error ? CLOUD_COLS_NO_ITEMS : CLOUD_COLS);
     if (probePoly.error) console.warn('数据库还没有 poly 列，先按旧结构跑（范围功能不显示）');
+    if (!probeItems.error) cloud.hasItems = true;
+    else console.warn('数据库还没有 items 列：一处多树种暂存本机，跑一次 SQL 后自动生效');
 
     cloud.app = app;
     cloud.db = db;
@@ -537,8 +651,12 @@ async function pollCloud() {
   }
 }
 
-/** 上传一条。返回 'ok' / 'denied'（被数据库挡住）/ 'error'（网络问题） */
+/** 上传一条。返回 'ok' / 'denied'（被数据库挡住）/ 'error'（网络问题）
+    / 'blocked'（数据库还没支持一处多树种，暂不上传） */
 async function cloudSave(t) {
+  // 数据库还没有 items 列时，一条记录里的多个树种会被压成只剩第 1 种。
+  // 与其把数据弄丢，不如先只留本机，等跑过 SQL 再传。
+  if (!canUploadSafely(t)) return 'blocked';
   const isNew = !t._cloud;
 
   // 新增直接写；改动走函数，函数里核对名字和暗号。
@@ -860,11 +978,148 @@ function speciesById(id) {
          { name: '未记录', icon: '🌳', color: '#9e9e9e', id: 'unknown' };
 }
 
-/** 记录的显示名：选了「其他」或「暂不确定」时，用填进去的名称 */
-function speciesLabel(t) {
-  const sp = speciesById(t.species);
-  if (t.speciesOther && (t.species === 'unknown' || sp.isOther)) return t.speciesOther;
+/* ---------------------------------------------------------------
+   一处多树种
+
+   原来一条记录只能挂一个树种。实际上一处常常是好几种混在一起
+   （树下有麦冬、旁边一丛竹），所以每条记录带一个 items 数组，
+   每种植物各填各的数量／树高／胸径／面积。
+
+   顶层的 species/count/area/... 保留成第 1 条的镜像：
+   数据库老列、旧版客户端和以前导出的 CSV 都还认这些字段。
+   --------------------------------------------------------------- */
+
+const ITEM_KEYS = ['species', 'speciesOther', 'several', 'count', 'area', 'height', 'dbh'];
+
+/** 把一条来的植物条目补成完整形状 */
+function normItem(it) {
+  const o = it && typeof it === 'object' ? it : {};
+  return {
+    species: o.species || 'unknown',
+    speciesOther: o.speciesOther || '',
+    several: !!o.several,
+    count: o.count ?? null,
+    area: o.area ?? null,
+    height: o.height ?? null,
+    dbh: o.dbh ?? null,
+  };
+}
+
+/** 老记录（单树种）折成一条。
+
+    注意只对「确实记了树种」的记录这么干 —— 正在新建的空记录
+    species 是空的，不能凭空补出一条「暂不确定」。 */
+function itemsFromLegacy(t) {
+  if (!t || !t.species) return [];
+  return [normItem({
+    species: t.species, speciesOther: t.speciesOther, several: t.several,
+    count: t.count, area: t.area, height: t.height, dbh: t.dbh,
+  })];
+}
+
+/** 读一条记录里的植物。没有 items 的老数据就地补上 */
+function itemsOf(t) {
+  if (!t) return [];
+  if (!Array.isArray(t.items) || !t.items.length) t.items = itemsFromLegacy(t);
+  return t.items;
+}
+
+/** 顶层字段跟上第 1 条 —— 数据库老列和旧导出格式靠它们 */
+function mirrorFirstItem(t) {
+  const it = itemsOf(t)[0];
+  if (!it) return t;
+  for (const k of ITEM_KEYS) t[k] = it[k];
+  return t;
+}
+
+/** 数据从哪来（本地/云端/导入）都先过一遍这里 */
+function normalizeRecord(t) {
+  if (!t || typeof t !== 'object') return t;
+  t.items = itemsOf(t).map(normItem).filter((it) => it.species);
+  if (!t.items.length) t.items = itemsFromLegacy(t);
+  // 一条也没记的时候别留个空 species，不然会被当成"记过但没选种"
+  if (!t.items.length && !t.species) t.species = null;
+  return mirrorFirstItem(t);
+}
+
+function itemSpecies(it) {
+  return speciesById(it && it.species);
+}
+
+/** 条目属于哪一类（跟着它的树种走） */
+function itemCategory(it) {
+  const sp = itemSpecies(it);
+  return CATEGORY[sp.role] ? sp.role : '待定';
+}
+
+/** 条目的显示名：选了「其他」或「暂不确定」时，用填进去的名称 */
+function itemLabel(it) {
+  const sp = itemSpecies(it);
+  if (it.speciesOther && (it.species === 'unknown' || sp.isOther)) return it.speciesOther;
   return sp.name;
+}
+
+/** 条目的【该记的量】带单位显示：草本看面积，其余看株数/丛数 */
+function itemAmountText(it) {
+  const cfg = CATEGORY[itemCategory(it)];
+  if (!cfg.count) {
+    return it.several ? '面积未测' : (it.area ? `${it.area} m²` : '面积未测');
+  }
+  return it.several ? '若干' : `${it.count || 1} ${cfg.unit}`;
+}
+
+/** 条目的助记串：「银杏 3 株」「麦冬 15 m²」 */
+function itemText(it) {
+  return `${itemLabel(it)} ${itemAmountText(it)}`;
+}
+
+/** 一条记录里都有哪些种，超过两个就缩写 */
+function joinItems(t, fn) {
+  const list = itemsOf(t).map(fn);
+  if (list.length <= 2) return list.join(' + ');
+  return `${list.slice(0, 2).join(' + ')} 等${list.length}种`;
+}
+
+/** 记录的显示名（几种就都列出来） */
+function speciesLabel(t) {
+  return joinItems(t, itemLabel);
+}
+
+/** 这条记录属于哪一类（混种时按第 1 条，只用来取图标颜色） */
+function categoryOf(t) {
+  return itemCategory(itemsOf(t)[0] || {});
+}
+
+/** 该记的量：混种时依次列出 */
+function amountText(t) {
+  return joinItems(t, itemAmountText);
+}
+
+/** 地图角标：短，只标"这一处有多株"或"数不清" */
+function pinBadge(t) {
+  const items = itemsOf(t);
+  const cam = (t.photos && t.photos.length && $('ly-photos') && $('ly-photos').checked)
+    ? `<div class="pin-cam">📷</div>` : '';
+  if (items.length > 1) return `<div class="pin-count multi">${items.length}种</div>` + cam;
+  const it = items[0] || {};
+  const cfg = CATEGORY[itemCategory(it)];
+  if (it.several) return `<div class="pin-count several">${cfg.count ? '若干' : '未测'}</div>` + cam;
+  if (cfg.count && it.count > 1) return `<div class="pin-count">${it.count}</div>` + cam;
+  return cam;
+}
+
+/** 按类别合计（株、丛、m² 分开加）。混种的每种各算各的 */
+function summarize(list) {
+  const sums = {}, several = {};
+  for (const k of Object.keys(CATEGORY)) { sums[k] = 0; several[k] = 0; }
+  for (const t of list) {
+    for (const it of itemsOf(t)) {
+      const c = itemCategory(it);
+      if (it.several) { several[c] += 1; continue; }
+      sums[c] += CATEGORY[c].count ? (it.count || 1) : (it.area || 0);
+    }
+  }
+  return { sums, several };
 }
 
 /* ---------------------------------------------------------------
@@ -893,44 +1148,6 @@ const CATEGORY = {
                   short: '未定', hint: '同一片连续的同种植物可以合并记一条' },
 };
 
-/** 这条记录属于哪一类（跟着所选树种走） */
-function categoryOf(t) {
-  const sp = speciesById(t.species);
-  return CATEGORY[sp.role] ? sp.role : '待定';
-}
-
-/**【该记的量】带单位显示：草本看面积，其余看株数/丛数 */
-function amountText(t) {
-  const cfg = CATEGORY[categoryOf(t)];
-  if (!cfg.count) {
-    return t.several ? '面积未测' : (t.area ? `${t.area} m²` : '面积未测');
-  }
-  return t.several ? '若干' : `${t.count || 1} ${cfg.unit}`;
-}
-
-/** 地图角标：短，只标"这一处有多株"或"数不清" */
-function pinBadge(t) {
-  const cfg = CATEGORY[categoryOf(t)];
-  const cam = (t.photos && t.photos.length && $('ly-photos') && $('ly-photos').checked)
-    ? `<div class="pin-cam">📷</div>` : '';
-  if (t.several) return `<div class="pin-count several">${cfg.count ? '若干' : '未测'}</div>` + cam;
-  if (cfg.count && t.count > 1) return `<div class="pin-count">${t.count}</div>` + cam;
-  return cam;
-}
-
-/** 按类别合计（株、丛、m² 分开加） */
-function summarize(list) {
-  const sums = {}, several = {};
-  for (const k of Object.keys(CATEGORY)) { sums[k] = 0; several[k] = 0; }
-  for (const t of list) {
-    const c = categoryOf(t);
-    if (t.several) { several[c] += 1; continue; }
-    sums[c] += CATEGORY[c].count ? (t.count || 1) : (t.area || 0);
-  }
-  return { sums, several };
-}
-
-/** 一行文字概括各类合计，只列有数据的 */
 function renderTrees() {
   treeLayer.clearLayers();
   photoLayer.clearLayers();
@@ -938,7 +1155,7 @@ function renderTrees() {
   const showPhotos = $('ly-photos').checked;
 
   for (const t of state.trees) {
-    const sp = speciesById(t.species);
+    const sp = speciesById(itemsOf(t)[0] && itemsOf(t)[0].species);
     const badge = pinBadge(t);
     const tip = `<b>${escapeHtml(speciesLabel(t))}</b> · ${escapeHtml(amountText(t))}`
       + (t.note ? `<br><span style="font-size:11px">${escapeHtml(t.note)}</span>` : '');
@@ -1012,7 +1229,11 @@ function updateModeBar() {
     const pendingN = state.trees.filter((t) => !t._cloud && !t._localOnly).length;
     const pending = pendingN
       ? ` · <span class="mb-warn">${pendingN} 条待上传</span>` : '';
-    $('mode-text').innerHTML = `☁️ 云端协作${cnt}${pending}`;
+    // 访客说明白为什么点不动，不然会以为是坏了
+    const who = ident.ready
+      ? ` · ${ident.name}（${ROLE_TEXT[ident.role] || ''}）`
+      : ' · 访客（只能看 · 点右上角登记）';
+    $('mode-text').innerHTML = `☁️ 云端协作${who}${cnt}${pending}`;
     return;
   }
 
@@ -1162,13 +1383,13 @@ function polyCenter(poly) {
 
     「圈范围」和「重选位置」都要暂时收起面板让出屏幕，回来时靠草稿恢复。
     不先把表单收起来的话，选了树种、填了数量再回来看就全没了 ——
-    因为草稿一直是空的，恢复时会把表单覆盖成空。 */
+    因为草稿一直是空的，恢复时会把表单覆盖成空。
+
+    每种的数量/规格输入框都挂在各自的卡片上，改的是草稿里的条目本身，
+    所以这里只需要收位置和备注这类整条共用的字段。 */
 function syncDraftFromForm() {
   const d = state.draft;
   if (!d) return;
-  d.species = state.pickingSpecies;
-  d.speciesOther = $('f-species-other').value.trim();
-  d.several = state.pickingSeveral;
   d.health = state.pickingHealth;
   d.note = $('f-note').value;
   d.recorder = $('f-recorder').value.trim();
@@ -1178,12 +1399,6 @@ function syncDraftFromForm() {
     const v = parseFloat($(id).value);
     return isNaN(v) ? null : v;
   };
-  const cnt = num('f-count');
-  d.count = cnt == null ? 1 : cnt;
-  d.area = num('f-area');
-  d.height = num('f-height');
-  d.dbh = num('f-dbh');
-
   const la = num('f-lat');
   const lo = num('f-lon');
   if (la != null && lo != null) { d.lat = la; d.lon = lo; }
@@ -1247,8 +1462,17 @@ function finishDrawRange() {
   state.draft.poly = poly;
   state.draft.lat = c[0];
   state.draft.lon = c[1];
-  // 面积按圈出来的算，但表单里还能改 —— 草木不一定铺满整个圈
-  state.draft.area = Math.round(polyAreaM2(poly) * 10) / 10;
+  // 面积按圈出来的算，但每个条目里还能改 —— 草木不一定铺满整个圈。
+  // 记下这个数，之后往这一处加草本时直接带进去。
+  state.draft.drawnArea = Math.round(polyAreaM2(poly) * 10) / 10;
+  // 已经有草本条目的，把面积跟着更新；没填过的才算，避免盖掉手填的数
+  for (const it of itemsOf(state.draft)) {
+    if (CATEGORY[itemCategory(it)].count) continue;
+    if (it.area == null || it.area === state.draft._lastDrawnArea) {
+      it.area = state.draft.drawnArea;
+    }
+  }
+  state.draft._lastDrawnArea = state.draft.drawnArea;
   endDraw();
   showSheetFrame();
   toast('范围记下了，面积按圈出的算好了，可以改');
@@ -1267,22 +1491,12 @@ function openSheet(lat, lon, id) {
   const existing = id ? state.trees.find((t) => t.id === id) : null;
 
   state.draft = existing
-    ? { ...existing }
-    : { id: uid(), lat, lon, species: null, count: 1, height: null, dbh: null,
-        several: false, area: null, poly: [], health: '良好', note: '',
+    ? { ...existing, items: itemsOf(existing).map((x) => ({ ...x })) }
+    : { id: uid(), lat, lon, items: [], poly: [], health: '良好', note: '',
         recorder: ident.name || localStorage.getItem(RECORDER_KEY) || '',
         photos: [], created: Date.now() };
 
   showSheetFrame();
-}
-
-/** 把草稿里的数量/规格回填到表单（换树种后会再调一次） */
-function loadDraftValues() {
-  if (!state.draft) return;
-  $('f-count').value = state.draft.count || 1;
-  $('f-area').value = state.draft.area ?? '';
-  $('f-height').value = state.draft.height ?? '';
-  $('f-dbh').value = state.draft.dbh ?? '';
 }
 
 function closeSheet(keepDraft) {
@@ -1292,6 +1506,7 @@ function closeSheet(keepDraft) {
     state.selectedId = null;
     state.draft = null;
     state.pendingPhotos = [];
+    state.editingItem = null;
   }
   renderTrees();
 }
@@ -1306,11 +1521,7 @@ function showSheetFrame() {
     ? state.trees.find((t) => t.id === state.selectedId) : null;
 
   state.pendingPhotos = [...(d.photos || [])];
-  state.pickingSpecies = d.species;
   state.pickingHealth = d.health || '良好';
-  state.pickingSeveral = !!d.several;
-  state.spSearch = '';
-  if ($('f-species-search')) $('f-species-search').value = '';
 
   const editable = canEdit(existing);
   $('sheet-title').textContent = existing
@@ -1319,17 +1530,18 @@ function showSheetFrame() {
   // 别人的记录不给删/不给存 —— 数据库本来也会拒，先收起来免得白点
   $('btn-delete').classList.toggle('hidden', !existing || !editable);
   $('btn-save').classList.toggle('hidden', !editable);
+  $('btn-add-species').classList.toggle('hidden', !editable);
   $('f-lat').value = d.lat.toFixed(6);
   $('f-lon').value = d.lon.toFixed(6);
-  $('f-species-other').value = d.speciesOther || '';
   $('f-note').value = d.note || '';
   $('f-recorder').value = d.recorder || '';
 
-  loadDraftValues();
-  renderSpeciesGrid();
+  // 不给改的记录只读展示，别让人白填半天
+  $('sheet').classList.toggle('readonly', !editable);
+
+  renderItemsUI();
   renderHealthChips();
   renderPhotoPreview();
-  renderCountUI();
   renderRangeUI();
   updateLocHint();
 
@@ -1367,8 +1579,8 @@ function updateLocHint() {
   $('loc-hint').textContent = txt;
 }
 
-/* 树种网格：按用途分组 */
-/* 树种网格：按植物名录分四大类，每类可折叠，带搜索 */
+/* 树种网格：按植物名录分四大类，每类可折叠，带搜索。
+   只有在「添加一种植物」展开时才用得上。 */
 const SPECIES_ORDER = ['乔木', '灌木或藤木', '草本', '竹类', '待定'];
 
 function renderSpeciesGrid() {
@@ -1397,8 +1609,7 @@ function renderSpeciesGrid() {
     html += `<div class="sp-group${isCollapsed ? ' hidden' : ''}" data-group="${escapeHtml(role)}">`;
     for (const sp of hit) {
       const extra = sp.isOther ? ' sp-other' : '';
-      html += `<button type="button" class="sp-item${state.pickingSpecies === sp.id ? ' active' : ''}${extra}"
-                 data-sp="${sp.id}">
+      html += `<button type="button" class="sp-item${extra}" data-sp="${sp.id}">
                  <span class="sp-icon">${sp.icon}</span>
                  <span class="sp-name">${escapeHtml(sp.name)}</span>
                </button>`;
@@ -1416,24 +1627,177 @@ function renderSpeciesGrid() {
     });
   });
   grid.querySelectorAll('.sp-item').forEach((el) => {
-    el.addEventListener('click', () => {
-      const changed = state.pickingSpecies !== el.dataset.sp;
-      state.pickingSpecies = el.dataset.sp;
-      renderSpeciesGrid();
-      // 换了树种就换字段（乔木才有树高胸径；草本是面积）
-      if (changed) {
-        const cfg = CATEGORY[speciesById(state.pickingSpecies).role] || CATEGORY['待定'];
-        if (!cfg.count) state.pickingSeveral = false;   // 面积没有「若干」
-        loadDraftValues();
-        renderCountUI();
-      }
-    });
+    el.addEventListener('click', () => addSpeciesToDraft(el.dataset.sp));
   });
 
   // 「其他」和「暂不确定」都要填名称
   const sp = state.species.find((s) => s.id === state.pickingSpecies);
   const needText = state.pickingSpecies === 'unknown' || (sp && sp.isOther);
   $('f-species-other').classList.toggle('hidden', !needText);
+}
+
+/* ---------------------------------------------------------------
+   「这一处有哪几种」
+   --------------------------------------------------------------- */
+
+function openSpeciesPicker() {
+  state.editingItem = -1;               // -1 = 正在加一种新的
+  state.pickingSpecies = null;
+  state.spSearch = '';
+  if ($('f-species-search')) $('f-species-search').value = '';
+  if ($('f-species-other')) $('f-species-other').value = '';
+  $('sp-picker').classList.remove('hidden');
+  $('btn-add-species').classList.add('hidden');
+  renderSpeciesGrid();
+  $('f-species-search').focus();
+}
+
+function closeSpeciesPicker() {
+  state.editingItem = null;
+  $('sp-picker').classList.add('hidden');
+  $('btn-add-species').classList.remove('hidden');
+}
+
+/** 选了树种 → 加进草稿（同名同类的不重复加） */
+function addSpeciesToDraft(spId) {
+  const sp = speciesById(spId);
+  const other = ($('f-species-other').value || '').trim();
+  const needText = spId === 'unknown' || sp.isOther;
+  if (needText && !other) {
+    toast('选了「其他」或「暂不确定」就要写清名称', true);
+    $('f-species-other').focus();
+    return;
+  }
+  const items = itemsOf(state.draft);
+  const same = items.findIndex((it) =>
+    it.species === spId && (it.speciesOther || '') === (needText ? other : ''));
+  if (same >= 0) {
+    toast(`${itemLabel(items[same])} 已经在列表里了`, true);
+    closeSpeciesPicker();
+    renderItemsUI();
+    return;
+  }
+  const cfg = CATEGORY[sp.role] || CATEGORY['待定'];
+  items.push(normItem({
+    species: spId,
+    speciesOther: needText ? other : '',
+    count: cfg.count ? 1 : null,
+    // 圈过范围的，面积先按圈出来的填上，还能改
+    area: !cfg.count ? (state.draft.drawnArea ?? null) : null,
+  }));
+  state.draft.items = items;
+  closeSpeciesPicker();
+  renderItemsUI();
+}
+
+function removeSpeciesFromDraft(i) {
+  const items = itemsOf(state.draft);
+  if (items.length <= 1) return toast('至少留一种', true);
+  items.splice(i, 1);
+  state.draft.items = items;
+  renderItemsUI();
+}
+
+/** 一处有哪几种：每种一张卡片，各填各的数量/规格 */
+function renderItemsUI() {
+  const items = itemsOf(state.draft || {});
+  const box = $('sp-list');
+  const editable = !$('sheet').classList.contains('readonly');
+
+  if (!items.length) {
+    box.innerHTML = `<p class="sp-empty">还没有选种类 —— 点下面的「＋ 添加一种植物」</p>`;
+    $('sp-hint').textContent = '同一处有几种就加几种，每种单独填数量。';
+    return;
+  }
+
+  box.innerHTML = items.map((it, i) => {
+    const sp = itemSpecies(it);
+    const cfg = CATEGORY[itemCategory(it)];
+    const isArea = !cfg.count;
+    return `<div class="sp-card" data-i="${i}">
+      <div class="spc-head">
+        <span class="spc-icon" style="background:${sp.color}22">${sp.icon}</span>
+        <span class="spc-name">${escapeHtml(itemLabel(it))}
+          <span class="spc-role">${cfg.short}</span></span>
+        ${items.length > 1 && editable
+          ? `<button type="button" class="spc-del" data-act="del" title="去掉这一种">✕</button>` : ''}
+      </div>
+      <div class="spc-amount">
+        <span class="spc-label">${cfg.name}</span>
+        <div class="count-row">
+          <div class="stepper${it.several ? ' off' : ''}${isArea ? ' hidden' : ''}">
+            <button type="button" class="step" data-step="-1">−</button>
+            <input class="f-count" type="number" min="1" max="9999"
+                   value="${it.count || 1}" ${editable ? '' : 'disabled'}>
+            <button type="button" class="step" data-step="1">＋</button>
+          </div>
+          <div class="area-row${isArea ? '' : ' hidden'}">
+            <input class="f-area" type="number" step="0.5" min="0" placeholder="面积"
+                   value="${it.area ?? ''}" ${editable ? '' : 'disabled'}>
+            <span class="unit">m²</span>
+          </div>
+          <button type="button" class="chip several${it.several ? ' active' : ''}"
+                  data-act="several" ${editable ? '' : 'disabled'}>${isArea ? '未测' : '若干'}</button>
+        </div>
+      </div>
+      <div class="spc-spec row2${cfg.spec ? '' : ' hidden'}">
+        <div>
+          <label>树高（米）</label>
+          <input class="f-height" type="number" step="0.5" min="0" placeholder="选填"
+                 value="${it.height ?? ''}" ${editable ? '' : 'disabled'}>
+        </div>
+        <div>
+          <label>胸径（厘米）</label>
+          <input class="f-dbh" type="number" step="1" min="0" placeholder="选填"
+                 value="${it.dbh ?? ''}" ${editable ? '' : 'disabled'}>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  box.querySelectorAll('.sp-card').forEach((card) => {
+    const i = Number(card.dataset.i);
+    const it = () => itemsOf(state.draft)[i];
+
+    const numVal = (sel) => {
+      const v = parseFloat(card.querySelector(sel).value);
+      return isNaN(v) ? null : v;
+    };
+
+    card.querySelectorAll('.f-count, .f-area, .f-height, .f-dbh').forEach((inp) => {
+      inp.addEventListener('input', () => {
+        const it0 = it(); if (!it0) return;
+        if (inp.classList.contains('f-count')) it0.count = Math.max(1, parseInt(inp.value, 10) || 1);
+        if (inp.classList.contains('f-area')) it0.area = numVal('.f-area');
+        if (inp.classList.contains('f-height')) it0.height = numVal('.f-height');
+        if (inp.classList.contains('f-dbh')) it0.dbh = numVal('.f-dbh');
+      });
+    });
+
+    card.querySelectorAll('.step').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const it0 = it(); if (!it0) return;
+        const v = Math.max(1, (it0.count || 1) + Number(btn.dataset.step));
+        it0.count = v;
+        it0.several = false;                  // 手动调数就说明知道数量
+        renderItemsUI();
+      });
+    });
+
+    const severalBtn = card.querySelector('[data-act=several]');
+    if (severalBtn) severalBtn.addEventListener('click', () => {
+      const it0 = it(); if (!it0) return;
+      it0.several = !it0.several;
+      renderItemsUI();
+    });
+
+    const delBtn = card.querySelector('[data-act=del]');
+    if (delBtn) delBtn.addEventListener('click', () => removeSpeciesFromDraft(i));
+  });
+
+  $('sp-hint').textContent = items.length > 1
+    ? `这一处记了 ${items.length} 种，各自的数量分别填在上面。`
+    : CATEGORY[itemCategory(items[0])].hint;
 }
 
 function renderHealthChips() {
@@ -1447,34 +1811,6 @@ function renderHealthChips() {
       renderHealthChips();
     });
   });
-}
-
-/* 表单跟着树种类别变：
-     乔木        → 株数 + 树高 + 胸径
-     灌木或藤木  → 只要株数
-     草本        → 换成面积
-     竹类        → 丛数
-   还没选树种时全放开，免得学生还没选就看不到字段。 */
-function renderCountUI() {
-  const sp = speciesById(state.pickingSpecies);
-  const cfg = CATEGORY[sp.role] || CATEGORY['待定'];
-  const isArea = !cfg.count;          // 草本：按面积记
-
-  $('amount-label').textContent = cfg.name;
-  $('count-stepper').classList.toggle('hidden', isArea);
-  $('area-row').classList.toggle('hidden', !isArea);
-  $('field-spec').classList.toggle('hidden', !cfg.spec);
-
-  const on = state.pickingSeveral;
-  $('count-stepper').classList.toggle('off', on);
-  $('btn-several').classList.toggle('active', on);
-  // 草本不叫「若干」，叫「未测」更贴切
-  $('btn-several').textContent = isArea ? '未测' : '若干';
-
-  $('count-hint').textContent = on
-    ? (isArea ? '记作「未测」—— 统计时不并进总面积'
-              : '记作「若干」—— 统计时不并进具体数量')
-    : cfg.hint;
 }
 
 async function renderPhotoPreview() {
@@ -1528,18 +1864,18 @@ function compressImage(file, maxSide, quality) {
   });
 }
 
-/* 保存：只存这一类该记的字段
-     （乔木存胸径/树高/株数，灌木只存株数，草本存面积，竹类存丛数） */
+/* 保存：这一处有哪几种就存哪几种，每种各存各的字段 */
 async function saveSheet() {
-  // 云端模式下必须先登记。登记框只是一个盖住屏幕的浮层，
-  // 万一被绕过就会存出「没有归属」的记录（谁都没法改），
-  // 所以在保存这一步再硬挡一次。
-  if (cloud.enabled && !ident.ready) {
-    showIdentGate('先登记名字和暗号，才能往地图里记');
+  // 访客只能看。登记框只是一个盖住屏幕的浮层，万一被绕过，
+  // 也会存出「没有归属」的记录（谁都没法改），所以这里再硬挡一次。
+  if (!canWrite()) {
+    if (cloud.enabled && !ident.ready) showIdentGate('先登记名字和暗号，才能往地图里记');
+    else toast('访客只能看，不能记录', true);
     return;
   }
-  if (!state.pickingSpecies) {
-    toast('请选择植物种类（不认识就选「暂不确定」）', true);
+  const items = itemsOf(state.draft || {}).map(normItem).filter((it) => it.species);
+  if (!items.length) {
+    toast('请添加至少一种植物（不认识就选「暂不确定」）', true);
     return;
   }
   const lat = parseFloat($('f-lat').value);
@@ -1564,11 +1900,6 @@ async function saveSheet() {
     }
   }
 
-  const cfg = CATEGORY[speciesById(state.pickingSpecies).role] || CATEGORY['待定'];
-  const height = parseFloat($('f-height').value);
-  const dbh = parseFloat($('f-dbh').value);
-  const area = parseFloat($('f-area').value);
-  const other = $('f-species-other').value.trim();
   const recorder = $('f-recorder').value.trim();
   // 记录人是必填：后面要按人统计、要判断这条是谁记的，
   // 空着的话老师和学生自己都分不清哪条是谁的。
@@ -1577,35 +1908,28 @@ async function saveSheet() {
     $('f-recorder').focus();
     return;
   }
-  const spPick = state.species.find((s) => s.id === state.pickingSpecies);
-  const needText = state.pickingSpecies === 'unknown' || (spPick && spPick.isOther);
-  if (needText && !other) {
-    toast('请填写名称（选了「其他」就要写清是什么）', true);
-    return;
-  }
-  // 草本没填面积也没标未测，存下来是个空记录，不如当场问清楚
-  if (!cfg.count && !state.pickingSeveral && !(area >= 0)) {
-    toast('请填面积，或点「未测」', true);
-    return;
+  // 每种都要填够：写了「其他」要有名称，草本要有面积或标未测
+  for (const it of items) {
+    const sp = itemSpecies(it);
+    const cfg = CATEGORY[itemCategory(it)];
+    if ((it.species === 'unknown' || sp.isOther) && !(it.speciesOther || '').trim()) {
+      toast('有树种还没写名称（选了「其他」或「暂不确定」）', true);
+      return;
+    }
+    if (!cfg.count && !it.several && !(it.area >= 0)) {
+      toast(`${itemLabel(it)} 还没填面积 —— 填一个数，或点「未测」`, true);
+      return;
+    }
   }
 
   const prev = state.trees.find((t) => t.id === state.draft.id);
 
-  const rec = {
+  const rec = normalizeRecord({
     id: state.draft.id,
     lat, lon,
-    species: state.pickingSpecies,
-    speciesOther: needText ? other : '',
-    several: state.pickingSeveral,
-    // 株数/丛数：草本不用
-    count: cfg.count ? Math.max(1, parseInt($('f-count').value, 10) || 1) : null,
-    // 面积：只有草本用
-    area: cfg.count ? null : (isNaN(area) ? null : area),
+    items,
     // 圈出的范围（草本是主要用途，其他类别也可以用来看成片范围）
     poly: Array.isArray(state.draft.poly) ? state.draft.poly : [],
-    // 树高/胸径：只有乔木用
-    height: cfg.spec && !isNaN(height) ? height : null,
-    dbh: cfg.spec && !isNaN(dbh) ? dbh : null,
     health: state.pickingHealth,
     note: $('f-note').value.trim(),
     recorder,
@@ -1614,7 +1938,9 @@ async function saveSheet() {
     updated: Date.now(),
     // 这个标记必须继承下来：丢了的话，改一条已上传的记录会被当成新记录再插一份
     _cloud: prev ? prev._cloud : false,
-  };
+  });
+  // 一条记录里只有第 1 种时，顶层镜像才有意义；多种时别留个误导性的面积
+  if (items.length > 1) rec.area = null;
 
   if (recorder) localStorage.setItem(RECORDER_KEY, recorder);
 
@@ -1640,9 +1966,11 @@ async function saveSheet() {
       if (cur) cur._cloud = false;
       saveTrees();
       renderTrees();
-      toast(res === 'denied'
-        ? '这条只存在本机：服务器没接受'
-        : '网络不通，先存在本机，稍后自动补传', true);
+      toast(res === 'blocked'
+        ? '这条先存本机：数据库还没支持"一处多树种"，跑一次 SQL 后会自动补传'
+        : (res === 'denied'
+          ? '这条只存在本机：服务器没接受'
+          : '网络不通，先存在本机，稍后自动补传'), true);
     });
     return;
   }
@@ -1664,6 +1992,11 @@ async function saveSheet() {
 
 function deleteTree() {
   if (!state.selectedId) return;
+  const target = state.trees.find((t) => t.id === state.selectedId);
+  if (target && !canDelete(target)) {
+    toast(ident.role === 'teacher' ? '删不了' : '这条不是在你名下，改不了', true);
+    return;
+  }
   if (!confirm('确定删除这条记录吗？')) return;
   const id = state.selectedId;
   const gone = state.trees.find((t) => t.id === id);
@@ -1702,18 +2035,20 @@ function distanceM(a, b) {
   return Math.sqrt(dLat * dLat + x * x) * R;
 }
 
+/** 两条记录有没有共同的树种（「暂不确定」算万能匹配） */
+function sharesSpecies(a, b) {
+  return itemsOf(a).some((x) => itemsOf(b).some((y) =>
+    x.species === y.species || x.species === 'unknown' || y.species === 'unknown'));
+}
+
 /** 在 pool 里找与 rec 可能是同一处的记录，返回 {twin, dist, sizeDiffers} 或 null */
 function findTwin(rec, pool) {
   let best = null, bestD = Infinity;
   for (const t of pool) {
     const d = distanceM(rec, t);
     if (d > DUP_RADIUS_M) continue;
-    // 类别不同（乔木 vs 草本）就是两种东西，不算重复
-    if (categoryOf(t) !== categoryOf(rec)) continue;
-    // 树种不同且都不是"暂不确定"→ 大概率是紧邻的两处不同的植物，不算重复
-    const compatible = t.species === rec.species
-      || t.species === 'unknown' || rec.species === 'unknown';
-    if (!compatible) continue;
+    // 一个树种都搭不上（乔木 vs 草本、银杏 vs 圆柏）就是两处，不算重复
+    if (!sharesSpecies(t, rec)) continue;
     if (d < bestD) { bestD = d; best = t; }
   }
   return best ? { twin: best, dist: bestD, sizeDiffers: sizeDiffers(best, rec) } : null;
@@ -1740,38 +2075,43 @@ function sizeDiffers(a, b) {
       || cmp(a.area, b.area, 20, 2.0);       // 草本面积：差 20 平米且差 2 倍以上
 }
 
-/** 把 inc 的信息并进 base（同一处，取更全的信息） */
+/** 把 inc 的信息并进 base（同一处，取更全的信息）。
+    两条都可能是多树种：按种名逐个对齐，缺的补进来。 */
 function mergeInto(base, inc) {
-  const cfg = CATEGORY[categoryOf(base)];
-  // 只要有一边是「若干/未测」，结果就是它（知道数的那边不会更少）
-  if (base.several || inc.several) {
-    base.several = true;
-  } else if (cfg.count) {
-    base.count = Math.max(base.count || 1, inc.count || 1);
-  } else {
-    base.area = Math.max(base.area || 0, inc.area || 0);
+  const key = (it) => `${itemLabel(it)}|${itemCategory(it)}`;
+  const baseItems = itemsOf(base);
+  for (const src of itemsOf(inc)) {
+    const hit = baseItems.find((x) => key(x) === key(src));
+    if (!hit) { baseItems.push({ ...src }); continue; }
+    const cfg = CATEGORY[itemCategory(hit)];
+    // 只要有一边是「若干/未测」，结果就是它（知道数的那边不会更少）
+    if (hit.several || src.several) hit.several = true;
+    else if (cfg.count) hit.count = Math.max(hit.count || 1, src.count || 1);
+    else hit.area = Math.max(hit.area || 0, src.area || 0);
+    if (hit.height == null) hit.height = src.height ?? null;
+    if (hit.dbh == null) hit.dbh = src.dbh ?? null;
   }
-  if (base.height == null) base.height = inc.height ?? null;
-  if (base.dbh == null) base.dbh = inc.dbh ?? null;
+  base.items = baseItems;
   base.photos = [...new Set([...(base.photos || []), ...(inc.photos || [])])].slice(0, 3);
   if (inc.note && inc.note !== base.note) {
     base.note = base.note ? `${base.note} / ${inc.note}` : inc.note;
   }
   const names = [...new Set([base.recorder, inc.recorder].filter(Boolean))];
   if (names.length) base.recorder = names.join('+');
-  // 树种名称：一边空着就补上（比如 A 只写了「其他」，B 写了具体名）
-  if (!base.speciesOther && inc.speciesOther) base.speciesOther = inc.speciesOther;
   base.updated = Date.now();
+  mirrorFirstItem(base);
+  return base;
 }
 
 function treeLabel(t) {
-  const sp = speciesById(t.species);
-  const cfg = CATEGORY[categoryOf(t)];
-  const bits = [amountText(t)];
-  if (t.height) bits.push(`高${t.height}m`);
-  if (t.dbh) bits.push(`胸径${t.dbh}cm`);
+  const items = itemsOf(t);
+  const sp = speciesById(items[0] && items[0].species);
+  const bits = items.map(itemAmountText);
+  const first = items[0] || {};
+  if (first.height) bits.push(`高${first.height}m`);
+  if (first.dbh) bits.push(`胸径${first.dbh}cm`);
   // 类别不同的两条记录放在一起比较时，标出类别免得看不出差别
-  bits.push(cfg.short);
+  bits.push(CATEGORY[itemCategory(first)].short);
   return { icon: sp.icon, color: sp.color, name: speciesLabel(t), meta: bits.join(' · ') };
 }
 
@@ -1854,6 +2194,7 @@ function parseCSVtoTrees(text) {
     });
   }
   if (!out.length) throw new Error('CSV 里没解析出有效记录');
+  out.forEach(normalizeRecord);
   return out;
 }
 
@@ -1872,9 +2213,31 @@ async function importFile(file) {
 
   const fresh = [];
   let dupId = 0;
+  // CSV 是一处几种就几行、共用一个记录ID。先按 ID 合并回一条多树种记录，
+  // 不能让同一处的几行各占一条（自己导出的表再导回来必须还是原样）。
+  const byRecId = new Map();
+  const merged = [];
   for (const t of incoming) {
     if (!t || typeof t.lat !== 'number' || typeof t.lon !== 'number') continue;
     if (!t.id) t.id = uid();
+    // 老备份只有单个树种，补成 items，后面各处只管读 items
+    normalizeRecord(t);
+    const group = byRecId.get(t.id);
+    if (group) {
+      // 同一处的另一行：把树种并进来，地名/备注取先有的那个
+      for (const it of itemsOf(t)) {
+        const dup = itemsOf(group).some((x) =>
+          x.species === it.species && (x.speciesOther || '') === (it.speciesOther || ''));
+        if (!dup) itemsOf(group).push(it);
+      }
+      mirrorFirstItem(group);
+      continue;
+    }
+    byRecId.set(t.id, t);
+    merged.push(t);
+  }
+
+  for (const t of merged) {
     const clash = state.trees.find((x) => x.id === t.id);
     if (clash) {
       // 同一个 id 未必是同一条：不同人各自生成 id 极小概率会撞上。
@@ -2025,20 +2388,20 @@ function renderList() {
   if (state.search) {
     const q = state.search.toLowerCase();
     rows = rows.filter((t) => {
-      const sp = speciesById(t.species);
-      return (sp.name + (t.note || '') + (t.recorder || '') + (t.speciesOther || ''))
+      const hay = itemsOf(t).map((it) => `${itemLabel(it)}${it.speciesOther || ''}`).join(' ');
+      return (hay + (t.note || '') + (t.recorder || ''))
         .toLowerCase().includes(q);
     });
   }
 
   if (state.sort === 'species') {
-    rows.sort((a, b) => speciesById(a.species).name.localeCompare(speciesById(b.species).name));
+    rows.sort((a, b) => speciesLabel(a).localeCompare(speciesLabel(b)));
   } else if (state.sort === 'count') {
     // 株、丛、m² 单位不同，排序时按各类的量纲各自归一，避免"草本 50m²"压过"乔木 30 株"
-    const rank = (t) => {
-      const c = categoryOf(t);
-      return CATEGORY[c].count ? (t.count || 1) : (t.area || 0) / 10;
-    };
+    const rank = (t) => itemsOf(t).reduce((s, it) => {
+      const c = CATEGORY[itemCategory(it)];
+      return s + (c.count ? (it.count || 1) : (it.area || 0) / 10);
+    }, 0);
     rows.sort((a, b) => rank(b) - rank(a));
   } else {
     rows.sort((a, b) => (b.created || 0) - (a.created || 0));
@@ -2053,12 +2416,10 @@ function renderList() {
   }
 
   body.innerHTML = rows.map((t) => {
-    const sp = speciesById(t.species);
-    const cfg = CATEGORY[categoryOf(t)];
+    const items = itemsOf(t);
+    const sp = speciesById(items[0] && items[0].species);
     const bits = [];
     if (t.note) bits.push(t.note);
-    if (t.height) bits.push(`高 ${t.height}m`);
-    if (t.dbh) bits.push(`胸径 ${t.dbh}cm`);
     if (t.health && t.health !== '良好') bits.push(t.health);
     if (t.recorder) bits.push(t.recorder);
     bits.push(fmtTime(t.created));
@@ -2067,13 +2428,18 @@ function renderList() {
     const thumb = t.photos && t.photos.length
       ? `<span class="tr-cam">📷 ${t.photos.length}</span>` : '';
 
-    const cnum = `<span class="tr-count${t.several ? ' several' : ''}">${
-      escapeHtml(amountText(t))}</span>`;
+    // 一处几种：每种一行，各带各的数量
+    const cnum = items.map((it) => `<span class="tr-count${
+      it.several ? ' several' : ''}">${escapeHtml(itemAmountText(it))}</span>`).join('');
+
+    const name = items.length > 1
+      ? `${items.map(itemLabel).map(escapeHtml).join(' · ')}`
+      : escapeHtml(speciesLabel(t));
 
     return `<div class="tree-row" data-id="${t.id}">
       <div class="tr-icon" style="background:${sp.color}22">${sp.icon}</div>
       <div class="tr-main">
-        <p class="tr-name">${escapeHtml(speciesLabel(t))}${cnum}</p>
+        <p class="tr-name">${name}${cnum}</p>
         <p class="tr-sub">${escapeHtml(bits.join(' · '))}</p>
       </div>${thumb}
     </div>`;
@@ -2131,17 +2497,20 @@ function renderStats() {
   // 按类别分组列明细：同一类别里的数值单位一致，才能比长短
   for (const k of ['乔木', '灌木或藤木', '草本', '竹类', '待定']) {
     const cfg = CATEGORY[k];
-    const rows = state.trees.filter((t) => categoryOf(t) === k);
+    // 一处多树种：按条目拆开统计，同一处里的两种各算各的
+    const rows = [];
+    for (const t of state.trees) {
+      for (const it of itemsOf(t)) if (itemCategory(it) === k) rows.push(it);
+    }
     if (!rows.length) continue;
 
     const byName = {};
-    for (const t of rows) {
-      const nm = speciesLabel(t);
-      byName[nm] = byName[nm] || { icon: speciesById(t.species).icon, color: speciesById(t.species).color,
-                                   value: 0, several: 0, records: 0 };
-      if (t.several) byName[nm].several += 1;
-      else byName[nm].value += cfg.count ? (t.count || 1) : (t.area || 0);
-      byName[nm].records += 1;
+    for (const it of rows) {
+      const nm = itemLabel(it);
+      const sp = itemSpecies(it);
+      byName[nm] = byName[nm] || { icon: sp.icon, color: sp.color, value: 0, several: 0 };
+      if (it.several) byName[nm].several += 1;
+      else byName[nm].value += cfg.count ? (it.count || 1) : (it.area || 0);
     }
     const sorted = Object.entries(byName).sort((a, b) => b[1].value - a[1].value);
     const maxV = Math.max(1, ...sorted.map(([, v]) => v.value));
@@ -2172,7 +2541,10 @@ function renderStats() {
    --------------------------------------------------------------- */
 /* 导出的表头照着学校《校园植物名录》的列来 ——
    这份 CSV 是要交给学校的，列名对得上才好并进总表。
-   四类记的东西不同，所以要分开列（株数 / 丛数 / 面积）。 */
+   四类记的东西不同，所以要分开列（株数 / 丛数 / 面积）。
+
+   一处记了几种就出几行，行首是同一个「记录ID」——
+   交给学校的台账每种一行，清点的时候也还看得出是同一处。 */
 function exportCSV() {
   if (!state.trees.length) return toast('还没有数据可导出', true);
   const head = ['记录ID', '类别', '种名', '其他名称', '纬度', '经度',
@@ -2181,34 +2553,39 @@ function exportCSV() {
   const lines = [head.join(',')];
 
   for (const t of state.trees) {
-    const k = categoryOf(t);
-    const isTree = k === '乔木';
-    const isBamboo = k === '竹类';
-    const isHerb = k === '草本';
     const poly = Array.isArray(t.poly) ? t.poly : [];
     // 圈过范围的，把实测面积和边界坐标一并导出，别人好复核
     const drawn = poly.length >= 3 ? Math.round(polyAreaM2(poly) * 10) / 10 : '';
     const wkt = poly.length >= 3
       ? poly.map((p) => `${p[1].toFixed(6)} ${p[0].toFixed(6)}`).join('; ')
       : '';
-    const row = [
-      t.id, CATEGORY[k].short, speciesLabel(t), t.speciesOther || '',
-      t.lat.toFixed(6), t.lon.toFixed(6),
-      // 株数 / 丛数：只有对应的类别才填，「若干」写成字
-      isTree || k === '灌木或藤木' || k === '待定'
-        ? (t.several ? '若干' : (t.count || 1)) : '',
-      isBamboo ? (t.several ? '若干' : (t.count || 1)) : '',
-      isHerb ? (t.several ? '未测' : (t.area ?? '')) : '',
-      drawn, poly.length >= 3 ? poly.length : '', wkt,
-      isTree ? (t.height ?? '') : '',
-      isTree ? (t.dbh ?? '') : '',
-      t.health || '',
-      t.note || '', t.recorder || '', fmtTime(t.created), (t.photos || []).length,
-    ].map((v) => {
-      const s = String(v);
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    });
-    lines.push(row.join(','));
+    // 范围是整处共用的，只挂在第一行上，免得同一个圈重复好几遍
+    let first = true;
+
+    for (const it of itemsOf(t)) {
+      const k = itemCategory(it);
+      const cnt = it.several ? '若干' : (it.count || 1);
+      const row = [
+        t.id, CATEGORY[k].short, itemLabel(it), it.speciesOther || '',
+        t.lat.toFixed(6), t.lon.toFixed(6),
+        // 株数 / 丛数：只有对应的类别才填，「若干」写成字
+        (k === '乔木' || k === '灌木或藤木' || k === '待定') ? cnt : '',
+        k === '竹类' ? cnt : '',
+        k === '草本' ? (it.several ? '未测' : (it.area ?? '')) : '',
+        first ? drawn : '',
+        first && poly.length >= 3 ? poly.length : '',
+        first ? wkt : '',
+        k === '乔木' ? (it.height ?? '') : '',
+        k === '乔木' ? (it.dbh ?? '') : '',
+        t.health || '',
+        t.note || '', t.recorder || '', fmtTime(t.created), (t.photos || []).length,
+      ].map((v) => {
+        const s = String(v);
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      });
+      lines.push(row.join(','));
+      first = false;
+    }
   }
   const who = [...new Set(state.trees.map((t) => t.recorder).filter(Boolean))].join('+');
   // 加 BOM 让 Excel 正确识别中文
@@ -2259,6 +2636,7 @@ function importJSON(file) {
       for (const t of trees) {
         if (!t || typeof t.lat !== 'number' || typeof t.lon !== 'number') continue;
         if (!t.id) t.id = uid();
+        normalizeRecord(t);
         if (!state.trees.some((x) => x.id === t.id)) {
           state.trees.push(t);
           added++;
@@ -2279,21 +2657,116 @@ function importJSON(file) {
    面板开关
    --------------------------------------------------------------- */
 function closeAllSheets() {
-  ['sheet', 'list-panel', 'stats-panel', 'help-panel'].forEach((id) => $(id).classList.add('hidden'));
-  ['sheet-mask', 'list-mask', 'stats-mask', 'help-mask'].forEach((id) => $(id).classList.add('hidden'));
+  ['sheet', 'list-panel', 'stats-panel', 'help-panel', 'members-panel'].forEach((id) => $(id).classList.add('hidden'));
+  ['sheet-mask', 'list-mask', 'stats-mask', 'help-mask', 'members-mask'].forEach((id) => $(id).classList.add('hidden'));
   state.selectedId = null;
-  state.pickingSpecies = state.pickingSpecies;
 }
 
 function openPanel(name) {
   closeAllSheets();
   const map_ = { list: ['list-panel', 'list-mask'], stats: ['stats-panel', 'stats-mask'],
-                 help: ['help-panel', 'help-mask'] };
+                 help: ['help-panel', 'help-mask'], members: ['members-panel', 'members-mask'] };
   const [panel, mask] = map_[name];
   $(panel).classList.remove('hidden');
   $(mask).classList.remove('hidden');
   if (name === 'list') renderList();
   if (name === 'stats') renderStats();
+  if (name === 'members') renderMembers();
+}
+
+/* ---------------------------------------------------------------
+   成员管理（只有老师能进）
+
+   名册就是数据库的 owners 表：在里面 = 学生级，is_teacher = 老师级，
+   不在里面 = 访客。加人、改角色、重置暗号都交给数据库函数核对身份，
+   前端只是把这几个动作摆出来。
+   --------------------------------------------------------------- */
+async function renderMembers() {
+  const body = $('members-body');
+  if (!isTeacher()) {
+    body.innerHTML = '<p class="mem-empty">只有老师能管理成员。</p>';
+    return;
+  }
+  body.innerHTML = '<p class="mem-empty">正在读取名单…</p>';
+  const r = await cloudListMembers();
+  if (!r.ok) {
+    body.innerHTML = `<p class="mem-empty">读不到名单：${escapeHtml(r.msg || '')}
+      <br>多半是数据库还没加这一段的权限，让维护的人跑一次 SQL。</p>`;
+    return;
+  }
+  $('members-count').textContent = r.list.length;
+
+  // 老师排前面，其余按加入时间
+  const list = [...r.list].sort((a, b) =>
+    (a.role === 'teacher' ? 0 : 1) - (b.role === 'teacher' ? 0 : 1)
+    || (a.created_at || 0) - (b.created_at || 0));
+
+  body.innerHTML = list.map((m) => {
+    const me = m.name === ident.name;
+    const teacher = m.role === 'teacher';
+    const n = state.trees.filter((t) => t.ownerName === m.name).length;
+    return `<div class="mem-row" data-name="${escapeHtml(m.name)}">
+      <div class="mem-main">
+        <p class="mem-name">${escapeHtml(m.name)}
+          <span class="mem-role${teacher ? ' teacher' : ''}">${teacher ? '老师' : '学生'}</span>
+          ${me ? '<span class="mem-me">你</span>' : ''}</p>
+        <p class="mem-sub">记了 ${n} 条</p>
+      </div>
+      <button type="button" class="mem-btn" data-act="reset">改暗号</button>
+      <button type="button" class="mem-btn ${teacher ? '' : 'warn'}"
+              data-act="role" data-to="${teacher ? 'student' : 'teacher'}"
+              ${me ? 'disabled title="不能改自己"' : ''}>${teacher ? '降为学生' : '升为老师'}</button>
+      <button type="button" class="mem-btn danger" data-act="del"
+              ${me ? 'disabled title="不能删自己"' : ''}>移除</button>
+    </div>`;
+  }).join('');
+
+  body.querySelectorAll('.mem-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const name = btn.closest('.mem-row').dataset.name;
+      const act = btn.dataset.act;
+      if (act === 'reset') {
+        const pin = prompt(`给「${name}」设一个新暗号（4 位以上）：`);
+        if (pin == null) return;
+        if (pin.trim().length < 4) return toast('暗号至少 4 位', true);
+        const res = await cloudMemberOp('set_pin', name, pin.trim());
+        toast(res.ok ? `${name} 的暗号改好了，告诉他新暗号` : `没改成：${res.reason || res.msg || ''}`, !res.ok);
+      } else if (act === 'role') {
+        const to = btn.dataset.to;
+        if (!confirm(`把「${name}」改成${to === 'teacher' ? '老师' : '学生'}？`)) return;
+        const res = await cloudMemberOp('set_role', name, to);
+        toast(res.ok ? '改好了' : `没改成：${res.reason || res.msg || ''}`, !res.ok);
+      } else {
+        if (!confirm(`把「${name}」从名单里移除？\n\n他之后会变成访客，只能看；`
+          + `已经记下的数据不受影响。`)) return;
+        const res = await cloudMemberOp('remove', name);
+        toast(res.ok ? '已移除' : `没移除：${res.reason || res.msg || ''}`, !res.ok);
+      }
+      renderMembers();
+      applyRoleUI();
+    });
+  });
+}
+
+/** 老师在面板里加一个人 */
+async function addMember() {
+  if (!isTeacher()) return;
+  const name = $('mem-name').value.trim();
+  const pin = $('mem-pin').value.trim();
+  if (!name) return toast('请填姓名', true);
+  if (pin.length < 4) return toast('初始暗号至少 4 位', true);
+  const res = await cloudMemberOp('add', name, pin);
+  if (!res.ok) {
+    const why = res.reason === 'exists' ? '这个名字已经在名单里了'
+      : res.reason === 'not_teacher' ? '只有老师能加人'
+      : (res.msg || res.reason || '');
+    return toast('没加成：' + why, true);
+  }
+  $('mem-name').value = '';
+  $('mem-pin').value = '';
+  toast(`已把 ${name} 加入名单，把暗号告诉他`);
+  renderMembers();
+  applyRoleUI();
 }
 
 /* ---------------------------------------------------------------
@@ -2323,22 +2796,9 @@ function bind() {
   $('f-lat').addEventListener('input', updateLocHint);
   $('f-lon').addEventListener('input', updateLocHint);
 
-  $('f-count').addEventListener('change', (e) => {
-    e.target.value = Math.max(1, parseInt(e.target.value, 10) || 1);
-  });
-  document.querySelectorAll('.stepper .step').forEach((el) => {
-    el.addEventListener('click', () => {
-      const inp = $('f-count');
-      inp.value = Math.max(1, (parseInt(inp.value, 10) || 1) + Number(el.dataset.step));
-      // 手动调数字就说明知道数量，自动退出「若干」
-      if (state.pickingSeveral) { state.pickingSeveral = false; renderCountUI(); }
-    });
-  });
-  // 「若干」：再点一下取消
-  $('btn-several').addEventListener('click', () => {
-    state.pickingSeveral = !state.pickingSeveral;
-    renderCountUI();
-  });
+  // 添加一种植物 / 取消
+  $('btn-add-species').addEventListener('click', openSpeciesPicker);
+  $('btn-sp-cancel').addEventListener('click', closeSpeciesPicker);
 
   // 树种搜索：输入即筛选，不折叠
   $('f-species-search').addEventListener('input', (e) => {
@@ -2373,6 +2833,23 @@ function bind() {
   $('btn-list').addEventListener('click', () => openPanel('list'));
   $('btn-stats').addEventListener('click', () => openPanel('stats'));
   $('btn-help').addEventListener('click', () => openPanel('help'));
+  $('btn-members').addEventListener('click', () => openPanel('members'));
+  $('members-close').addEventListener('click', closeAllSheets);
+  $('members-mask').addEventListener('click', closeAllSheets);
+  $('mem-add-btn').addEventListener('click', addMember);
+  $('mem-pin').addEventListener('keydown', (e) => { if (e.key === 'Enter') addMember(); });
+
+  // 换人 / 退出：点顶部那个人名
+  $('btn-me').addEventListener('click', () => {
+    if (!ident.ready) return showIdentGate();
+    const who = `${ident.name}（${ROLE_TEXT[ident.role]}）`;
+    if (confirm(`当前身份：${who}\n\n点「确定」重新登记（换个人用这台设备），`
+      + `点「取消」保持不动。\n\n（重新登记后，本地还没上传的记录仍会保留）`)) {
+      forgetIdent();
+      showIdentGate('请填你的名字和暗号');
+    }
+  });
+
   $('list-close').addEventListener('click', closeAllSheets);
   $('stats-close').addEventListener('click', closeAllSheets);
   $('help-close').addEventListener('click', closeAllSheets);
@@ -2470,28 +2947,36 @@ function bind() {
     renderTrees();
     updateModeBar();
 
-    // 已经登记过的，直接核对一次；没登记过的，弹出来让填
+    // 已经登记过的，直接核对一次；没登记过的，就是访客
     const saved = loadIdent();
     if (saved) {
       const r = await cloudWhoAmI(saved.name, saved.pin);
       if (r.ok) {
         ident.name = saved.name;
         ident.pin = saved.pin;
-        ident.teacher = !!r.teacher;
+        ident.role = r.role || 'guest';
         ident.ready = true;
         if ($('f-recorder') && !$('f-recorder').value) $('f-recorder').value = saved.name;
         renderTrees();
         updateModeBar();
         retryPendingPhotos();     // 有照片没传上去的，补一次
       } else {
+        // 暗号变了、或者已经被移出名单 —— 按访客处理，不挡住看地图
         localStorage.removeItem(IDENT_KEY);
-        showIdentGate('之前登记的暗号对不上了，重新填一下');
+        toast(r.reason === 'not_member'
+          ? '你不在成员名单里，现在是访客：可以看，不能记录'
+          : '上次的登记失效了，点右上角的人名重新登记', true);
       }
     } else {
-      showIdentGate();
+      // 不弹登记框：访客也能先看地图。想记录时再点右上角登记。
+      toast('访客模式：可以看。想记录就点右上角「登记」');
     }
+    updateMeButton();
+    applyRoleUI();
   } else {
     const ok = await initCollab();
     if (!ok) updateModeBar();
+    updateMeButton();
+    applyRoleUI();
   }
 })();

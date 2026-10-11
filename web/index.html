@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="vendor/maplibre-gl.css">
 <!-- ?v=N 是防缓存：改了下面这些文件就把数字加一，
      否则学生手机（尤其微信）会一直用旧的缓存副本 -->
-<link rel="stylesheet" href="app.css?v=8">
+<link rel="stylesheet" href="app.css?v=10">
 </head>
 <body>
 
@@ -21,9 +21,11 @@
     </div>
   </div>
   <div class="topbar-actions">
+    <button id="btn-members" class="btn ghost hidden" title="成员管理">👥 <span>成员</span></button>
     <button id="btn-list" class="btn ghost" title="记录清单">📋 <span>清单</span></button>
     <button id="btn-stats" class="btn ghost" title="统计">📊 <span>统计</span></button>
     <button id="btn-help" class="btn ghost" title="使用说明">❓ <span>说明</span></button>
+    <button id="btn-me" class="btn ghost" title="你是谁">👤 <span id="me-text">登记</span></button>
   </div>
 </header>
 
@@ -101,43 +103,22 @@
       <p class="hint" id="range-hint" class="hidden"></p>
     </div>
 
-    <!-- 种类 -->
+    <!-- 种类：同一处可以记多种，每种各填各的数量 -->
     <div class="field">
       <label>种类 <span class="req">*</span></label>
-      <input id="f-species-search" type="search" placeholder="🔍 输入名字快速找（如：银杏）"
-             autocapitalize="off" autocorrect="off">
-      <div class="species-grid" id="species-grid"></div>
-      <input id="f-species-other" class="hidden" type="text" placeholder="名称（本地叫法也可以）">
-    </div>
+      <div id="sp-list" class="sp-list"></div>
+      <button type="button" id="btn-add-species" class="btn small">＋ 添加一种植物</button>
 
-    <!-- 该记的量：跟着类别变（乔木株数 / 灌木株数 / 草本面积 / 竹类丛数） -->
-    <div class="field" id="field-amount">
-      <label id="amount-label">数量</label>
-      <div class="count-row">
-        <div class="stepper" id="count-stepper">
-          <button type="button" class="step" data-step="-1">−</button>
-          <input id="f-count" type="number" value="1" min="1" max="999">
-          <button type="button" class="step" data-step="1">＋</button>
-        </div>
-        <div class="area-row" id="area-row">
-          <input id="f-area" type="number" step="0.5" min="0" placeholder="面积">
-          <span class="unit">m²</span>
-        </div>
-        <button type="button" id="btn-several" class="chip several">若干</button>
+      <div id="sp-picker" class="hidden">
+        <input id="f-species-search" type="search" placeholder="🔍 输入名字快速找（如：银杏）"
+               autocapitalize="off" autocorrect="off">
+        <div class="species-grid" id="species-grid"></div>
+        <input id="f-species-other" class="hidden" type="text" placeholder="名称（本地叫法也可以）">
+        <button type="button" id="btn-sp-cancel" class="btn tiny">取消添加</button>
       </div>
-      <p class="hint" id="count-hint">同一片连续的同种树可以合并记一条，填总株数</p>
-    </div>
-
-    <!-- 规格：只有乔木记胸径和树高 -->
-    <div class="field row2" id="field-spec">
-      <div>
-        <label>树高（米）</label>
-        <input id="f-height" type="number" step="0.5" min="0" placeholder="选填">
-      </div>
-      <div>
-        <label>胸径（厘米）</label>
-        <input id="f-dbh" type="number" step="1" min="0" placeholder="选填">
-      </div>
+      <p class="hint" id="sp-hint">
+        同一处有几种就加几种，每种单独填数量。成片同种的可合并成一条，填总数。
+      </p>
     </div>
 
     <!-- 状态 -->
@@ -239,6 +220,30 @@
   </div>
 </section>
 
+<!-- ============ 成员管理（只有老师能进） ============ -->
+<div id="members-mask" class="mask hidden"></div>
+<section id="members-panel" class="sheet hidden">
+  <div class="sheet-handle"></div>
+  <div class="sheet-head">
+    <h2>成员名单 <span id="members-count" class="badge">0</span></h2>
+    <button id="members-close" class="icon-btn">✕</button>
+  </div>
+  <div class="list-tools" style="grid-template-columns:1fr">
+    <p class="hint" style="margin:0">
+      只有名单里的人能记录。<b>没在名单里的都是访客，只能看。</b>
+      暗号由你设，告诉本人；忘了就重置一个。
+    </p>
+  </div>
+  <div class="sheet-body">
+    <div class="mem-add">
+      <input id="mem-name" type="text" placeholder="姓名（如：杨玲）">
+      <input id="mem-pin" type="text" inputmode="numeric" placeholder="初始暗号（4 位以上）">
+      <button id="mem-add-btn" class="btn small">＋ 添加</button>
+    </div>
+    <div id="members-body" class="mem-body"></div>
+  </div>
+</section>
+
 <!-- ============ 合并确认弹窗 ============ -->
 <div id="merge-mask" class="mask hidden"></div>
 <section id="merge-panel" class="sheet hidden">
@@ -278,19 +283,28 @@
       就能把以前记的找回来。
     </p>
     <p class="tip">
-      💡 名字写你真名或小组名都行。暗号自己记牢，别用 1234 这种。
-      名字若已被别人用过，暗号对不上会提示你换个名字（比如加上姓）。
+      💡 <b>名字要先在名单里。</b>名字和暗号由赵老师在「👥 成员」里加进来，
+      加到你了就能记录。<b>没在名单里的人打开只能看</b>，不能往地图上记东西。
+      点顶部右侧的人名可以换人用。
     </p>
 
-    <h3>记录一棵树</h3>
+    <h3>三级权限</h3>
+    <ul>
+      <li><b>老师</b>（赵老师）：能加成员，能改删任何记录。</li>
+      <li><b>学生</b>（名单里的人）：能添加记录，能改删自己名下的。</li>
+      <li><b>访客</b>（没登记的人）：只能看地图、清单和统计。</li>
+    </ul>
+
+    <h3>记录一处植物</h3>
     <ol>
       <li><b>站到植物旁边</b>，等地图上的蓝点稳定下来（别在走动时记）。</li>
       <li>点底部 <b>「＋ 记录身边的植物」</b>，会自动用你当前位置。
           定位不准就点 <b>「重选位置」</b>，直接在地图上点一下。</li>
-      <li>选种类。不认识就点 <b>「暂不确定」</b>，先记位置，回头查了再补——
-          <b>位置比种名重要</b>。</li>
-      <li><b>不同类别要填的不一样</b>：乔木填株数、树高、胸径；灌木写株数；
-          草本写面积；竹类写丛数。表单会自动变，不用你选。</li>
+      <li><b>点「＋ 添加一种植物」选种类</b>。不认识就点 <b>「暂不确定」</b>，
+          先记位置，回头查了再补——<b>位置比种名重要</b>。</li>
+      <li><b>一处有几种就加几种。</b>树下的麦冬、旁边一丛竹，可以直接加进同一条。
+          每种各填各的数量：乔木填株数、树高、胸径；灌木写株数；草本写面积；竹类写丛数。
+          表单会跟着种类自动变，不用你选。</li>
       <li>写句备注（比如「靠三号楼东侧」），方便以后核对。</li>
       <li><b>面积说不清的，直接圈出来。</b>点「▱ 圈范围」，在地图上
           依次点几个点围住那片地，面积会自动算好填进去，地图上也会显示那块范围。
@@ -305,7 +319,7 @@
     <p class="tip">
       ⚠️ <b>三个容易出错的地方</b>：<br>
       · 每记一处都重新点一次「＋」，别一直用同一个位置往下加；<br>
-      · 成片同种的树可以合成一条，填总数量；<br>
+      · <b>同一片同种的</b>可以合成一条、填总数量；<b>不同种的</b>加在同一条里，各填各的；<br>
       · 数量数不清就点 <b>「若干」</b>，不要随便编一个数字。
     </p>
 
@@ -329,7 +343,11 @@
 
     <h3>给老师</h3>
     <ul>
-      <li>「清单」可以导出 CSV（含全部记录），直接在 Excel 里打开。</li>
+      <li><b>「👥 成员」加人。</b>填姓名和一个初始暗号，把暗号告诉本人。
+          这个人就成了学生级，能记录自己的数据。忘了暗号可以在这里重置。</li>
+      <li>要给人老师权限，在同一个面板里点「升为老师」。被移除的人立刻变回访客，只能看。</li>
+      <li>「清单」可以导出 CSV（含全部记录），直接在 Excel 里打开。
+          <b>一处记了几种就会出几行</b>，行首的记录 ID 相同，能看出是同一处。</li>
       <li>「统计」看各类构成和总量，汇报时可直接截屏。</li>
       <li>学生记错了、记重了，你自己登录后就能删——不用再跑数据库。</li>
     </ul>
@@ -374,7 +392,7 @@
 <script src="vendor/cloudbase.js?v=3.10.1"></script>
 <script src="vendor/leaflet.js"></script>
 <script src="vendor/maplibre-gl.js"></script>
-<script src="view3d.js?v=8"></script>
-<script src="app.js?v=8"></script>
+<script src="view3d.js?v=10"></script>
+<script src="app.js?v=10"></script>
 </body>
 </html>

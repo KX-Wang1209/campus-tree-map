@@ -428,29 +428,37 @@ function polygonCenter(geom) {
   return [x / pts.length, y / pts.length];
 }
 
-/** 把当前树木数据转成 GeoJSON（三维视图用） */
+/** 把当前树木数据转成 GeoJSON（三维视图用）。
+    一处多树种时按第 1 种定颜色和体量，弹窗里把所有种都列出来。 */
 function buildTreeFeatureCollection() {
   const feats = [];
   for (const t of state.trees) {
-    const sp = speciesById(t.species);
-    const cfg = CATEGORY[categoryOf(t)];
+    const items = itemsOf(t);
+    const first = items[0] || {};
+    const sp = speciesById(first.species);
+    const cfg = CATEGORY[itemCategory(first)];
     // 有实测树高就用，没有就按默认，让体量感更真实
-    const h = t.height || 6;
-    // 大灌木、竹丛比乔木矮，尺寸上区分一下，不然三维里全一样高
+    const h = first.height || 6;
+    // 大灌木、竹丛比乔木矮，尺寸上区分一下，不然三维里全是一样高
     const hEff = cfg.spec ? h : (sp.role === '竹类' ? 5 : 2.2);
     const base = {
       id: t.id,
       name: speciesLabel(t),
-      rawSpecies: t.species,
-      speciesOther: t.speciesOther || '',
+      rawSpecies: first.species,
+      speciesOther: first.speciesOther || '',
       color: sp.color,
-      count: t.several ? 0 : (cfg.count ? (t.count || 1) : 0),
-      several: !!t.several,
+      // 一处几株：多种时把各数量加起来，只看总量
+      count: items.reduce((s, it) => s + (it.several ? 0
+        : (CATEGORY[itemCategory(it)].count ? (it.count || 1) : 0)), 0),
+      several: items.some((it) => it.several),
       amount: amountText(t),
-      category: cfg.short,
+      // 筛选用：真实树种名列表。不能靠拆 name —— 超过两种时
+      // name 会被缩写成「A + B 等3种」，拆不出第三种，筛选就漏了
+      speciesList: items.map(itemLabel),
+      category: items.length > 1 ? `${items.length} 种` : cfg.short,
       note: t.note || '',
-      height: t.height || null,
-      dbh: t.dbh || null,
+      height: first.height || null,
+      dbh: first.dbh || null,
       recorder: t.recorder || '',
       dim: false,
     };
@@ -733,15 +741,18 @@ function openFilterPanel() {
   const panel = $('filter-panel');
   if (!panel.classList.contains('hidden')) { panel.classList.add('hidden'); return; }
 
-  // 按当前数据里实际出现的树种生成列表
+  // 按当前数据里实际出现的树种生成列表。
+  // 一处多树种按每个树种分别计入，筛选取的是树种名。
   const groups = {};
   for (const t of state.trees) {
-    const sp = speciesById(t.species);
-    const cfg = CATEGORY[categoryOf(t)];
-    const nm = speciesLabel(t);
-    if (!groups[nm]) groups[nm] = { name: nm, color: sp.color, count: 0, several: 0, unit: cfg.unit };
-    if (t.several) groups[nm].several += 1;
-    else groups[nm].count += cfg.count ? (t.count || 1) : (t.area || 0);
+    for (const it of itemsOf(t)) {
+      const sp = itemSpecies(it);
+      const cfg = CATEGORY[itemCategory(it)];
+      const nm = itemLabel(it);
+      if (!groups[nm]) groups[nm] = { name: nm, color: sp.color, count: 0, several: 0, unit: cfg.unit };
+      if (it.several) groups[nm].several += 1;
+      else groups[nm].count += cfg.count ? (it.count || 1) : (it.area || 0);
+    }
   }
   const list = Object.values(groups).sort((a, b) => b.count - a.count);
 
@@ -784,8 +795,9 @@ function applySpeciesFilter() {
   if (src && src._data) {
     const feats = src._data.features.map((f) => {
       const p = f.properties;
-      const nm = p.rawSpecies === 'unknown' && p.speciesOther ? p.speciesOther : p.name;
-      p.dim = chosen ? !chosen.has(nm) : false;
+      // 一处几种：任一个树种被选中就正常显示
+      const list = p.speciesList || [p.name];
+      p.dim = chosen ? !list.some((nm) => chosen.has(nm)) : false;
       return f;
     });
     src.setData({ type: 'FeatureCollection', features: feats });

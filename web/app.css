@@ -521,6 +521,89 @@ html, body {
 .sp-group-title.collapsed .sp-caret { transform: rotate(-90deg); }
 .sp-group.hidden { display: none; }
 
+/* ============ 一处多树种：每种一张卡 ============ */
+.sp-list { display: flex; flex-direction: column; gap: 9px; margin-bottom: 9px; }
+.sp-empty {
+  font-size: 12.5px; color: var(--ink-2); margin: 0;
+  padding: 12px; border: 1.5px dashed var(--line); border-radius: 10px;
+  text-align: center; background: #fbfcfa;
+}
+.sp-card {
+  border: 1.5px solid var(--line); border-radius: 12px;
+  padding: 10px 11px 11px; background: #fbfcfa;
+}
+.spc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+.spc-icon {
+  width: 30px; height: 30px; border-radius: 8px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; border: 1px solid rgba(0,0,0,.06);
+}
+.spc-name { font-size: 14.5px; font-weight: 640; flex: 1; min-width: 0; }
+.spc-role {
+  font-size: 10.5px; font-weight: 600; color: var(--ink-2);
+  background: #eceff1; border-radius: 6px; padding: 1px 6px; margin-left: 5px;
+}
+.spc-del {
+  border: none; background: #ffebee; color: var(--danger);
+  width: 30px; height: 30px; border-radius: 50%; cursor: pointer;
+  font-size: 13px; flex: none;
+}
+.spc-amount { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.spc-amount .spc-label { font-size: 12.5px; color: var(--ink-2); font-weight: 600; }
+.spc-spec { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 9px; }
+.spc-spec > div > label {
+  display: block; font-size: 12px; font-weight: 600; margin-bottom: 5px;
+}
+.spc-spec input {
+  width: 100%; padding: 9px 11px; font-size: 14.5px; font-family: inherit;
+  border: 1.5px solid var(--line); border-radius: 9px; background: #fff;
+}
+.spc-spec input:focus { outline: none; border-color: var(--green-light); }
+#sp-picker {
+  margin-top: 9px; padding-top: 10px; border-top: 1px dashed var(--line);
+}
+#btn-sp-cancel { margin-top: 8px; width: 100%; }
+/* 只能看的记录：不给点的东西收起来 */
+.sheet.readonly .sp-card { background: #f6f7f4; }
+
+/* 地图角标：一处记了几种 */
+.pin-count.multi { background: #5e35b1; min-width: 30px; }
+
+/* ============ 成员管理 ============ */
+.mem-add {
+  display: grid; grid-template-columns: 1fr 1fr auto; gap: 7px;
+  margin-bottom: 14px;
+}
+.mem-add input {
+  width: 100%; padding: 10px 12px; border: 1.5px solid var(--line);
+  border-radius: 10px; font-size: 14.5px; font-family: inherit; background: #fbfcfa;
+}
+.mem-add input:focus { outline: none; border-color: var(--green-light); background: #fff; }
+.mem-body { display: flex; flex-direction: column; gap: 1px; }
+.mem-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 2px; border-bottom: 1px solid #eef2ec; flex-wrap: wrap;
+}
+.mem-main { flex: 1 1 100%; min-width: 0; }
+.mem-name { margin: 0; font-size: 14.5px; font-weight: 640; display: flex; align-items: center; gap: 6px; }
+.mem-sub { margin: 2px 0 0; font-size: 11.5px; color: var(--ink-2); }
+.mem-role {
+  font-size: 10.5px; font-weight: 600; border-radius: 6px; padding: 1px 6px;
+  background: #eceff1; color: #546e7a;
+}
+.mem-role.teacher { background: var(--green-pale); color: var(--green); }
+.mem-me { font-size: 10.5px; color: var(--ink-2); }
+.mem-btn {
+  border: 1.5px solid var(--line); background: #fff; border-radius: 9px;
+  padding: 8px 11px; font-size: 12.5px; font-family: inherit;
+  cursor: pointer; color: var(--ink-2); min-height: 38px;
+}
+.mem-btn:hover { border-color: var(--green-light); }
+.mem-btn.warn { color: var(--warn); border-color: #ffe0b2; }
+.mem-btn.danger { color: var(--danger); border-color: #ffcdd2; }
+.mem-btn:disabled { opacity: .4; cursor: not-allowed; }
+.mem-empty { font-size: 12.5px; color: var(--ink-2); padding: 16px 0; }
+
 /* 状态 chips */
 .chips { display: flex; flex-wrap: wrap; gap: 7px; }
 .chip {
