@@ -52,8 +52,8 @@ html, body {
   flex: none; display: block;
   width: 26px; height: 26px;
   background: #fff;
-  -webkit-mask: url(logo.svg?v=32) center/contain no-repeat;
-  mask: url(logo.svg?v=32) center/contain no-repeat;
+  -webkit-mask: url(logo.svg?v=33) center/contain no-repeat;
+  mask: url(logo.svg?v=33) center/contain no-repeat;
 }
 /* 标题分两行：校名在上、应用名在下。
    并成一行时手机上会挤到放不下，所以固定两行。 */
@@ -264,11 +264,17 @@ html, body {
 /* 三维里的植物标记：形状表示类别，颜色表示树种，大小跟树高走。
    标记底边贴着地面（anchor: bottom），像是长在地上。 */
 .plant-3d {
-  /* 不能写 position: relative！
-     本文件在 maplibre-gl.css 之后加载，.plant-3d 和 .maplibregl-marker
-     权重相同（都是单类），所以我写的会压过 MapLibre 的 position:absolute，
-     标记会掉回普通文档流、一个个往下排成一竖列（踩过这个坑）。
-     定位一律交给 MapLibre。 */
+  /* 定位显式写死，和 maplibre-gl.css 里的 .maplibregl-marker 保持一致。
+
+     为什么必须自己写一遍：本文件在 maplibre-gl.css 之后加载，两个选择器
+     权重相同（都是单类），后加载的赢。之前这里写的是 position: relative，
+     就把 MapLibre 的 absolute 压掉了 —— 标记脱离地图定位、掉回普通文档流，
+     块级元素一个个往下排，在屏幕上就是一竖列（踩过这个坑，很费时间）。
+
+     现在两边写的是同一组值，谁赢都正确，也不怕加载顺序变化。 */
+  position: absolute;
+  left: 0;
+  top: 0;
   cursor: pointer;
   filter: drop-shadow(0 1px 2px rgba(0,0,0,.5));
   /* 只过渡透明度，绝不过渡 transform。
