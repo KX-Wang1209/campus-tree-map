@@ -191,8 +191,16 @@ html, body {
   #filter-panel { right: 62px; width: 186px; max-height: 55vh; }
 }
 
-/* 建筑名称标注 */
-.bld-label {
+/* 建筑名称标注
+
+   结构：外层容器（Leaflet 的 .bld-label / MapLibre 的 .bld-label-3d）只作锚点，
+   内层 .lbl-text 才是那个带底色的白框，用 translate(-50%,-50%) 居中。
+   为什么这么做：iconSize 给 [0,0] 会让底色塌成 0×0、文字溢出在框外；
+   给 null 又没法自动居中（Leaflet 要靠尺寸算偏移）。用内层元素绕开这个限制。 */
+.bld-label, .bld-label-3d { background: none; border: 0; }
+.bld-label .lbl-text, .bld-label-3d .lbl-text {
+  position: absolute; left: 0; top: 0; transform: translate(-50%, -50%);
+  display: inline-block;
   background: rgba(255,255,255,.88);
   border: 1px solid rgba(46,125,50,.35);
   border-radius: 5px;
@@ -205,7 +213,9 @@ html, body {
 
 /* 规划图点位标注（校门、独立建筑）——带一个小圆点，
    便于和建筑名称区分：这些是"图上标了、地图数据里没有轮廓"的位置 */
-.poi-label {
+.poi-label { background: none; border: 0; }
+.poi-label .poi-text {
+  position: absolute; left: 0; top: 0; transform: translate(-50%, -50%);
   display: flex; align-items: center; gap: 4px;
   background: rgba(255,253,245,.92);
   border: 1px solid rgba(230,81,0,.45);
@@ -221,17 +231,9 @@ html, body {
   flex: none;
 }
 
-/* 三维视图里的建筑名。DOM 标记，不用 symbol 文字图层（原因见 view3d.js） */
-.bld-label-3d {
-  background: rgba(255,255,255,.9);
-  border: 1px solid rgba(46,125,50,.4);
-  border-radius: 4px;
-  padding: 1px 5px;
-  font-size: 11px; color: #24401f; font-weight: 600;
-  white-space: nowrap;
-  box-shadow: 0 1px 3px rgba(0,0,0,.2);
-  pointer-events: none;
-}
+/* 三维视图里的建筑名。DOM 标记，不用 symbol 文字图层（原因见 view3d.js）。
+   底色由共用的 .lbl-text 画 —— 这样平面和三维的标注长得一样 */
+.bld-label-3d { pointer-events: none; }
 
 /* 树木标记 */
 .tree-pin { position: relative; }

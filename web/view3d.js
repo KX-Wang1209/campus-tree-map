@@ -383,8 +383,10 @@ function buildLabelMarkers(map3) {
   const add = (lon, lat, cls, text, tip) => {
     const el = document.createElement('div');
     el.className = cls;
-    if (cls === 'poi-label') el.innerHTML = `<span class="poi-dot"></span>${escapeHtml(text)}`;
-    else el.textContent = text;
+    // 标注容器不给尺寸、内层元素负责底色和居中 —— 结构与平面视图一致，
+    // 两者的 CSS 才能共用（.poi-label / .poi-text）
+    if (cls === 'poi-label') el.innerHTML = `<span class="poi-text"><span class="poi-dot"></span>${escapeHtml(text)}</span>`;
+    else el.innerHTML = `<span class="lbl-text">${escapeHtml(text)}</span>`;
     if (tip) el.title = tip;
     const mk = new maplibregl.Marker({ element: el, anchor: 'center' })
       .setLngLat([lon, lat])

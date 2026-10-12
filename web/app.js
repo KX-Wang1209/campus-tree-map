@@ -849,7 +849,7 @@ async function initMap() {
   // campus.json 跟着 app.js 一起改版本号：
   // 它不经过 index.html，不加 ?v= 的话手机（尤其微信）会一直读缓存的旧底图，
   // 改了建筑名也看不见
-  campusData = await fetch('campus.json?v=12').then((r) => r.json());
+  campusData = await fetch('campus.json?v=15').then((r) => r.json());
 
   buildBaseLayers();
   treeLayer = L.layerGroup().addTo(map);
@@ -939,8 +939,11 @@ function buildBaseLayers() {
     L.marker([lat, lon], {
       icon: L.divIcon({
         className: 'poi-label',
-        html: `<span class="poi-dot"></span>${escapeHtml(p.name)}`,
-        iconSize: [0, 0], iconAnchor: [0, 0],
+        html: `<span class="poi-text"><span class="poi-dot"></span>${escapeHtml(p.name)}</span>`,
+        // iconSize 给 null：给 [0,0] 的话 Leaflet 会写成内联的 0×0，
+        // 底色就只剩一小条、文字溢出在框外，看着像没有底色。
+        // 给 null 它就不设宽度，容器自然跟着文字撑开。
+        iconSize: null, iconAnchor: [0, 0],
       }),
       interactive: !!p.note,
     }).bindTooltip(
@@ -956,8 +959,9 @@ function buildBaseLayers() {
     if (!c) continue;
     L.marker(c, {
       icon: L.divIcon({
-        className: 'bld-label', html: escapeHtml(ft.properties.name),
-        iconSize: [0, 0], iconAnchor: [0, 0],
+        className: 'bld-label', html: `<span class="lbl-text">${escapeHtml(ft.properties.name)}</span>`,
+        // 同上：iconSize 用 null，底色才会跟着文字撑开
+        iconSize: null, iconAnchor: [0, 0],
       }),
       interactive: false,
     }).addTo(labelLayer);
