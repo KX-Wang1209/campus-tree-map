@@ -112,6 +112,17 @@ NAME_MAP = {
     "way/1497712894": "实训基地",
 }
 
+# 显示用名：统一的「X号公寓」写法。
+# OSM 里是「学生公寓1号楼」，这里去掉「学生」、把「号楼」挪到前面，
+# 也就是 1号公寓、2号公寓……省两个字的宽度，标注不容易挤在一起。
+def normalize_name(name: str) -> str:
+    if not name:
+        return name
+    if name.startswith("学生公寓") and name.endswith("号楼"):
+        return name[len("学生公寓"):-len("号楼")] + "号公寓"
+    return name
+
+
 # 效果图上标了、但 OSM 里没有对应建筑轮廓的点位（按配准结果落位）。
 # 主要是一些独立构筑物和校门，以及 2025-05 影像上还没建成、OSM 未收录的楼。
 POIS = [
@@ -200,7 +211,7 @@ def build_campus_geojson() -> dict:
         props = {
             "kind": kind,
             "sub": cat.split(":", 1)[1] if ":" in cat else "",
-            "name": p.get("name", ""),
+            "name": normalize_name(p.get("name", "")),
         }
         # OSM 自带的名称优先，没有的用规划图读出来的
         if not props["name"]:

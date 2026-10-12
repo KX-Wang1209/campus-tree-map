@@ -156,7 +156,10 @@ def make_basemap(buildings: list[dict]) -> Path:
                 draw.line(pts + [pts[0]], fill=(255, 70, 0), width=2)
                 cx = sum(p[0] for p in pts) / len(pts)
                 cy = sum(p[1] for p in pts) / len(pts)
-                nm = b["properties"]["name"].replace("学生公寓", "公寓")
+                # 公寓统一写「X号公寓」（与网页底图一致），其余沿用原名
+                nm = b["properties"]["name"]
+                if nm.startswith("学生公寓") and nm.endswith("号楼"):
+                    nm = nm[len("学生公寓"):-len("号楼")] + "号公寓"
                 if nm:
                     draw.text((cx - 18, cy - 5), nm, fill=(255, 240, 0))
 

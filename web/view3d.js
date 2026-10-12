@@ -399,7 +399,7 @@ function buildLabelMarkers(map3) {
     const [lon, lat] = polygonCenter(f.geometry);
     if (!lon) continue;
     const h = p.height_m ? `约 ${p.height_m} 米` : '';
-    add(lon, lat, 'bld-label-3d', p.name.replace('学生公寓', '公寓'), h);
+    add(lon, lat, 'bld-label-3d', p.name, h);
     // 名称连带高度一起浮在楼上方，用 marker 的 offset 抬高
     markers[markers.length - 1].setOffset([0, -34]);
   }
