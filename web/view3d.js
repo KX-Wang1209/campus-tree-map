@@ -459,11 +459,10 @@ function makePlantMarker(t) {
   el.className = 'plant-3d';
   el.dataset.tid = t.id;
   el.style.setProperty('--c', sp.color);
+  // 尺寸交给内层 svg，外层不给宽高 —— 外层是 MapLibre 的定位元素，
+  // 给它设尺寸会干扰定位计算（见下面 rebuildTreeMarkers 的说明）
   el.style.width = `${px}px`;
   el.style.height = `${px}px`;
-  // 锚点用的是 center，把图形上提半个高度，让"树根"落在记录点上。
-  // 必须用像素，不能用百分比（见 app.css 里的说明）
-  el.style.marginTop = `${-Math.round(px / 2)}px`;
   // 把记录挂在元素上，筛选时不用回头查列表
   el.__tree = t;
 
@@ -493,10 +492,11 @@ function rebuildTreeMarkers() {
 
   for (const t of state.trees) {
     if (!t.lat || !t.lon) continue;
-    // anchor 用 center 而不是 bottom：三维是倾斜视角，bottom 锚点会把
-    // 标记往画面下方推上千像素、直接推出屏幕（实测踩过）。
-    // 想让"树根"看着贴地，改用 CSS 往下挪一点，比动锚点稳。
-    const mk = new maplibregl.Marker({ element: makePlantMarker(t), anchor: 'center' })
+    // anchor: bottom —— 让标记底边（"树根"）落在记录点上。
+    // 之前误以为 bottom 会把标记推出屏幕，其实是当时那句
+    // margin-top:-18% 干的（百分比 margin 按容器宽度算，等于 -265px）。
+    // 现在完全交给 MapLibre 定位，不自己算偏移。
+    const mk = new maplibregl.Marker({ element: makePlantMarker(t), anchor: 'bottom' })
       .setLngLat([t.lon, t.lat])
       .addTo(map3);
     VIEW3D.treeMarkers.push(mk);
