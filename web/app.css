@@ -52,8 +52,8 @@ html, body {
   flex: none; display: block;
   width: 26px; height: 26px;
   background: #fff;
-  -webkit-mask: url(logo.svg?v=24) center/contain no-repeat;
-  mask: url(logo.svg?v=24) center/contain no-repeat;
+  -webkit-mask: url(logo.svg?v=26) center/contain no-repeat;
+  mask: url(logo.svg?v=26) center/contain no-repeat;
 }
 /* 标题分两行：校名在上、应用名在下。
    并成一行时手机上会挤到放不下，所以固定两行。 */
@@ -846,7 +846,11 @@ html, body {
   .brand-title .bt-school { font-size: 13px; }
   .brand-title .bt-app { font-size: 10.5px; }
   .topbar-actions .btn span { display: none; }
-  .topbar-actions .btn { padding: 8px 10px; }
+  /* 手机上按钮要收得更紧：老师登录后是 5 个按钮（多了「成员」），
+     按原来的间距会把标题挤到只剩 102px，校名正好差 2px 显示不全 */
+  .topbar-actions { gap: 4px; }
+  .topbar-actions .btn { padding: 8px 8px; }
+  #topbar { gap: 6px; padding: 0 10px; }
   #mode-bar { font-size: 11.5px; max-width: calc(100vw - 175px); padding: 6px 12px; }
   .panel { width: 141px; top: calc(var(--topbar-h) + 8px); left: 8px; }
   .panel-body label { font-size: 12.5px; }
@@ -864,6 +868,10 @@ html, body {
   .brand-mark { width: 22px; height: 22px; }
   .brand-title .bt-school { font-size: 12px; }
   .brand-title .bt-app { font-size: 10px; }
+  /* 5 个按钮在 320 宽的屏上仍会挤到标题，再收一点 */
+  .topbar-actions { gap: 3px; }
+  .topbar-actions .btn { padding: 8px 6px; }
+  #topbar { gap: 4px; padding: 0 8px; }
 }
 
 @media (min-width: 900px) {
