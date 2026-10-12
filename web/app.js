@@ -849,7 +849,7 @@ async function initMap() {
   // campus.json 跟着 app.js 一起改版本号：
   // 它不经过 index.html，不加 ?v= 的话手机（尤其微信）会一直读缓存的旧底图，
   // 改了建筑名也看不见
-  campusData = await fetch('campus.json?v=30').then((r) => r.json());
+  campusData = await fetch('campus.json?v=34').then((r) => r.json());
 
   buildBaseLayers();
   treeLayer = L.layerGroup().addTo(map);
@@ -3205,7 +3205,7 @@ function bind() {
 (async function main() {
   // 和 campus.json 同理：不加 ?v= 的话，改了名录（比如新增树种）
   // 学生手机上会一直读缓存的旧版本
-  state.species = await fetch('species.json?v=30').then((r) => r.json());
+  state.species = await fetch('species.json?v=34').then((r) => r.json());
   loadTrees();
   bind();
   await initMap();
