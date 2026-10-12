@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="vendor/maplibre-gl.css">
 <!-- ?v=N 是防缓存：改了下面这些文件就把数字加一，
      否则学生手机（尤其微信）会一直用旧的缓存副本 -->
-<link rel="stylesheet" href="app.css?v=17">
+<link rel="stylesheet" href="app.css?v=19">
 </head>
 <body>
 
@@ -114,6 +114,7 @@
                autocapitalize="off" autocorrect="off">
         <div class="species-grid" id="species-grid"></div>
         <input id="f-species-other" class="hidden" type="text" placeholder="名称（本地叫法也可以）">
+        <button type="button" id="btn-sp-confirm" class="btn small hidden">添加这种</button>
         <button type="button" id="btn-sp-cancel" class="btn tiny">取消添加</button>
       </div>
       <p class="hint" id="sp-hint">
@@ -392,7 +393,7 @@
 <script src="vendor/cloudbase.js?v=3.10.1"></script>
 <script src="vendor/leaflet.js"></script>
 <script src="vendor/maplibre-gl.js"></script>
-<script src="view3d.js?v=17"></script>
-<script src="app.js?v=17"></script>
+<script src="view3d.js?v=19"></script>
+<script src="app.js?v=19"></script>
 </body>
 </html>

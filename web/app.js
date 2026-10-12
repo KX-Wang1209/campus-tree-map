@@ -849,7 +849,7 @@ async function initMap() {
   // campus.json 跟着 app.js 一起改版本号：
   // 它不经过 index.html，不加 ?v= 的话手机（尤其微信）会一直读缓存的旧底图，
   // 改了建筑名也看不见
-  campusData = await fetch('campus.json?v=17').then((r) => r.json());
+  campusData = await fetch('campus.json?v=19').then((r) => r.json());
 
   buildBaseLayers();
   treeLayer = L.layerGroup().addTo(map);
@@ -1624,7 +1624,8 @@ function renderSpeciesGrid() {
     html += `<div class="sp-group${isCollapsed ? ' hidden' : ''}" data-group="${escapeHtml(role)}">`;
     for (const sp of hit) {
       const extra = sp.isOther ? ' sp-other' : '';
-      html += `<button type="button" class="sp-item${extra}" data-sp="${sp.id}">
+      const on = state.pickingSpecies === sp.id ? ' active' : '';
+      html += `<button type="button" class="sp-item${extra}${on}" data-sp="${sp.id}">
                  <span class="sp-icon">${sp.icon}</span>
                  <span class="sp-name">${escapeHtml(sp.name)}</span>
                </button>`;
@@ -1642,13 +1643,14 @@ function renderSpeciesGrid() {
     });
   });
   grid.querySelectorAll('.sp-item').forEach((el) => {
-    el.addEventListener('click', () => addSpeciesToDraft(el.dataset.sp));
+    el.addEventListener('click', () => pickSpecies(el.dataset.sp));
   });
 
   // 「其他」和「暂不确定」都要填名称
   const sp = state.species.find((s) => s.id === state.pickingSpecies);
   const needText = state.pickingSpecies === 'unknown' || (sp && sp.isOther);
   $('f-species-other').classList.toggle('hidden', !needText);
+  $('btn-sp-confirm').classList.toggle('hidden', !needText);
 }
 
 /* ---------------------------------------------------------------
@@ -1661,6 +1663,9 @@ function openSpeciesPicker() {
   state.spSearch = '';
   if ($('f-species-search')) $('f-species-search').value = '';
   if ($('f-species-other')) $('f-species-other').value = '';
+  // 名称框和确认键先收起，选了「其他」那类才露出来
+  $('f-species-other').classList.add('hidden');
+  $('btn-sp-confirm').classList.add('hidden');
   $('sp-picker').classList.remove('hidden');
   $('btn-add-species').classList.add('hidden');
   renderSpeciesGrid();
@@ -1673,11 +1678,43 @@ function closeSpeciesPicker() {
   $('btn-add-species').classList.remove('hidden');
 }
 
-/** 选了树种 → 加进草稿（同名同类的不重复加） */
-function addSpeciesToDraft(spId) {
+/** 点了树种卡片。
+    普通树种直接加；「其他」「暂不确定」得先问名称 ——
+    所以这两类只记住选择、把名称框露出来，等填完点「添加这种」再加。 */
+function pickSpecies(spId) {
   const sp = speciesById(spId);
-  const other = ($('f-species-other').value || '').trim();
   const needText = spId === 'unknown' || sp.isOther;
+  state.pickingSpecies = spId;
+
+  if (!needText) {
+    // 改选了普通树种：把上一步「其他」留下的名称框和确认键收起来，
+    // 免得下次打开选择器时残留
+    $('f-species-other').classList.add('hidden');
+    $('btn-sp-confirm').classList.add('hidden');
+    if ($('f-species-other')) $('f-species-other').value = '';
+    addSpeciesToDraft(spId, '');
+    return;
+  }
+  renderSpeciesGrid();                       // 让选中的那张卡片亮起来
+  $('f-species-other').classList.remove('hidden');
+  $('btn-sp-confirm').classList.remove('hidden');
+  $('f-species-other').focus();
+}
+
+/** 名称填好后确认添加 */
+function confirmSpeciesName() {
+  const spId = state.pickingSpecies;
+  if (!spId) return;
+  const other = ($('f-species-other').value || '').trim();
+  if (!other) { toast('请写清名称', true); $('f-species-other').focus(); return; }
+  addSpeciesToDraft(spId, other);
+}
+
+/** 加进草稿（同名同类的不重复加）。other 是「其他」那类填的名称 */
+function addSpeciesToDraft(spId, otherText) {
+  const sp = speciesById(spId);
+  const needText = spId === 'unknown' || sp.isOther;
+  const other = needText ? (otherText || '').trim() : '';
   if (needText && !other) {
     toast('选了「其他」或「暂不确定」就要写清名称', true);
     $('f-species-other').focus();
@@ -2813,6 +2850,10 @@ function bind() {
 
   // 添加一种植物 / 取消
   $('btn-add-species').addEventListener('click', openSpeciesPicker);
+  $('btn-sp-confirm').addEventListener('click', confirmSpeciesName);
+  $('f-species-other').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); confirmSpeciesName(); }
+  });
   $('btn-sp-cancel').addEventListener('click', closeSpeciesPicker);
 
   // 树种搜索：输入即筛选，不折叠
@@ -2952,7 +2993,7 @@ function bind() {
 (async function main() {
   // 和 campus.json 同理：不加 ?v= 的话，改了名录（比如新增树种）
   // 学生手机上会一直读缓存的旧版本
-  state.species = await fetch('species.json?v=17').then((r) => r.json());
+  state.species = await fetch('species.json?v=19').then((r) => r.json());
   loadTrees();
   bind();
   await initMap();
