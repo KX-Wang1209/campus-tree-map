@@ -846,7 +846,10 @@ async function initMap() {
 
   L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-  campusData = await fetch('campus.json').then((r) => r.json());
+  // campus.json 跟着 app.js 一起改版本号：
+  // 它不经过 index.html，不加 ?v= 的话手机（尤其微信）会一直读缓存的旧底图，
+  // 改了建筑名也看不见
+  campusData = await fetch('campus.json?v=11').then((r) => r.json());
 
   buildBaseLayers();
   treeLayer = L.layerGroup().addTo(map);
