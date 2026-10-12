@@ -20,6 +20,7 @@ const VIEW3D = {
   orbiting: false,       // 是否正在自动环绕
   orbitRaf: null,        // 环绕动画的 requestAnimationFrame 句柄
   speciesFilter: null,   // 树种筛选：null = 全显示，Set = 只看这些
+  treeMarkers: [],       // 植物标记（DOM 元素，不是图层）
 };
 
 // 树木数据源的递增编号。MapLibre 对被删过的源名会记住状态，
@@ -256,7 +257,6 @@ function rebuildTreeSource(map3) {
 
   if (src && src.setData) {
     src.setData(buildTreeFeatureCollection());
-    scheduleTreeCheck(map3);
     return;
   }
 
@@ -268,79 +268,6 @@ function rebuildTreeSource(map3) {
   addTreeLayers(map3, newId, seq);
   // 记下签名，避免紧接着又被 setData 一次
   VIEW3D.lastTreeSig = JSON.stringify(buildTreeFeatureCollection());
-
-  scheduleTreeCheck(map3);
-}
-
-/**
- * 建完树图层后自检一次：确认它真的渲染出来了。
- *
- * 为什么需要这个：MapLibre 在初始化流程中建的数据源偶发不参与渲染
- * （数据和图层配置都正常，但画面上没有）。实测同样的代码绝大多数时候正常，
- * 偶尔不生效，属于时序问题。与其赌它，不如建完检查一次，
- * 真没渲染出来就用全新的名字重建。
- *
- * 判断"该不该有树"要先确认树在视野内 —— queryRenderedFeatures 只统计
- * 屏幕内的要素，视野外查不到是正常的，不能当成失败。
- */
-function scheduleTreeCheck(map3, attempt = 0) {
-  if (attempt > 2) return;                 // 最多自愈两次，避免死循环
-  clearTimeout(VIEW3D.checkTimer);
-  VIEW3D.checkTimer = setTimeout(() => {
-    if (!VIEW3D.ready || !VIEW3D.map) return;
-    if (!state.trees.length) return;
-
-    const L = VIEW3D.treeLayers;
-    if (!L.canopy || !map3.getLayer(L.canopy)) return;
-
-    // 树在视野内吗？不在就无从判断，直接跳过
-    const cv = map3.getCanvas();
-    const dpr = window.devicePixelRatio || 1;
-    const visible = state.trees.some((t) => {
-      const p = map3.project([t.lon, t.lat]);
-      const x = p.x / dpr, y = p.y / dpr;
-      return x > -30 && x < cv.clientWidth + 30 && y > -30 && y < cv.clientHeight + 30;
-    });
-    if (!visible) return;
-
-    let n = 0;
-    try {
-      n = map3.queryRenderedFeatures([[0, 0], [cv.clientWidth, cv.clientHeight]])
-        .filter((f) => f.layer.id === L.canopy).length;
-    } catch (e) { return; }
-
-    if (n === 0) {
-      // 没渲染出来，用全新名字重建
-      map3 = VIEW3D.map;
-      const seq = ++treeSourceSeq;
-      const newId = `treelayer_${Date.now().toString(36)}_${seq}`;
-      const oldLayers = VIEW3D.treeLayers || {};
-      const oldSource = VIEW3D.treeSourceId;
-
-      map3.addSource(newId, { type: 'geojson', data: buildTreeFeatureCollection() });
-      VIEW3D.treeSourceId = newId;
-      addTreeLayers(map3, newId, seq);
-
-      // 删掉旧的（先建后删，避免中间空窗）
-      ['count', 'canopy', 'shadow'].forEach((k) => {
-        const id = oldLayers[k];
-        if (id && map3.getLayer(id)) { try { map3.removeLayer(id); } catch (e) {} }
-      });
-      if (oldSource && oldSource !== newId && map3.getSource(oldSource)) {
-        try { map3.removeSource(oldSource); } catch (e) {}
-      }
-
-      scheduleTreeCheck(map3, attempt + 1);
-    }
-  }, 900);
-}
-
-/**
- * 重建后校验一次：如果源没渲染出来，等一会重试。最多 2 次，避免死循环。
- */
-function verifyTreeRender(map3, attempt = 0) {
-  // 故意留空：MapLibre 对被删过的源有记忆，删了再建反而更不可靠，
-  // 所以不做自动重试。现在每次都用全新源名，一次到位。
 }
 
 /** 三维视图里控制对应图层的显隐 */
@@ -354,18 +281,21 @@ function set3DLayerVisible(switchId, on) {
     'ly-sports': ['sports'],
     'ly-water': ['water'],
     'ly-boundary': ['boundary'],
-    'ly-trees': [L.area, L.canopy, L.count, L.shadow].filter(Boolean),
+    'ly-trees': [L.area].filter(Boolean),
   };
   for (const lid of pairs[switchId] || []) {
     if (map3.getLayer(lid)) {
       map3.setLayoutProperty(lid, 'visibility', on ? 'visible' : 'none');
     }
   }
-  // 名称标记是 DOM 元素，走不到图层的显隐逻辑，单独处理
+  // 名称标记和植物标记都是 DOM 元素，走不到图层的显隐逻辑，单独处理
   if (switchId === 'ly-labels') {
     for (const mk of VIEW3D.labelMarkers || []) {
       mk.getElement().style.display = on ? '' : 'none';
     }
+  }
+  if (switchId === 'ly-trees') {
+    setTreeMarkersVisible(on);
   }
 }
 
@@ -417,6 +347,184 @@ function buildLabelMarkers(map3) {
   VIEW3D.labelMarkers = markers;
   const on = $('ly-labels') ? $('ly-labels').checked : true;
   if (!on) markers.forEach((mk) => { mk.getElement().style.display = 'none'; });
+}
+
+/* ---------------------------------------------------------------
+   三维里的植物标记
+
+   形状表示「哪一类」——树、灌木、草、竹一看就分得开；
+   颜色表示「哪个树种」；大小跟着实测树高走。
+   三样叠起来，一眼就能读出这是什么东西、有多大。
+
+   为什么用 DOM 标记而不是图层：
+     · MapLibre 的 circle 图层只能画圆，画不出植物形状；
+     · symbol 图标图层在这个页面上不稳定（踩过坑，见 addTreeLayers 注释）；
+     · DOM 标记和建筑名走同一套机制，稳定，还能共用网页的 CSS。
+
+   已知代价：DOM 标记是固定像素大小，拉远不会跟着缩小；
+   数量特别多（几百条以上）时会变慢。按本项目几十到一百多条的
+   规模够用。另外它不吃三维建筑的遮挡 —— 见下方注释。
+   --------------------------------------------------------------- */
+
+/** 待定（还没认出来）的兜底形状：虚线圆圈加问号 */
+const SHAPE_UNKNOWN = `<circle cx="16" cy="16" r="11.6" fill="#fff" fill-opacity=".92"
+      stroke="var(--c)" stroke-width="2.6" stroke-dasharray="5 3.6"/>
+    <text x="16" y="21.7" text-anchor="middle" font-size="15" font-weight="700"
+      font-family="system-ui,sans-serif" fill="var(--c)">?</text>`;
+
+/* 键要和 app.js 里 CATEGORY 的键一致，对不上就退回问号形状 */
+const PLANT_SHAPES = {
+  '乔木': `<path d="M15.1 21.5h1.8v8.2a.9.9 0 0 1-.9.9h0a.9.9 0 0 1-.9-.9z" fill="#7a5a45"/>
+    <ellipse cx="16" cy="13.4" rx="8.6" ry="7.6" fill="var(--c)"/>
+    <circle cx="9.3" cy="17.6" r="5.6" fill="var(--c)"/>
+    <circle cx="22.7" cy="17.6" r="5.6" fill="var(--c)"/>
+    <circle cx="16" cy="18.5" r="6.8" fill="var(--c)"/>`,
+  '灌木或藤木': `<circle cx="9.6" cy="21.4" r="6.2" fill="var(--c)"/>
+    <circle cx="22.4" cy="21.4" r="6.2" fill="var(--c)"/>
+    <circle cx="16" cy="17.4" r="7.8" fill="var(--c)"/>
+    <circle cx="16" cy="22.6" r="6.6" fill="var(--c)"/>`,
+  '草本': `<path d="M16 29.4 L20.6 8.6 L17.6 8.6 Z" fill="var(--c)"/>
+    <path d="M13.9 29.4 L8.6 10.4 L11.7 10.4 Z" fill="var(--c)"/>
+    <path d="M10.4 29.4 L3.6 16.4 L6.8 16.4 Z" fill="var(--c)"/>
+    <path d="M21.6 29.4 L28.4 16.4 L25.2 16.4 Z" fill="var(--c)"/>
+    <path d="M16 29.4 L16.3 11.6 L19 11.6 Z" fill="var(--c)"/>`,
+  '竹类': `<rect x="10.6" y="9.4" width="2.8" height="20" rx="1.4" fill="var(--c)"/>
+    <rect x="15.1" y="5.2" width="2.8" height="24.2" rx="1.4" fill="var(--c)"/>
+    <rect x="19.6" y="11.2" width="2.8" height="18.2" rx="1.4" fill="var(--c)"/>
+    <ellipse cx="7.4" cy="14.6" rx="4.8" ry="2" transform="rotate(-24 7.4 14.6)" fill="var(--c)"/>
+    <ellipse cx="24.8" cy="16.4" rx="4.8" ry="2" transform="rotate(24 24.8 16.4)" fill="var(--c)"/>`,
+  '待定': SHAPE_UNKNOWN,
+};
+
+/** 标记画多大：跟着实测树高走，没测过就给个默认值 */
+function plantMarkerSize(t) {
+  const it = itemsOf(t)[0] || {};
+  const cat = itemCategory(it);
+  const cfg = CATEGORY[cat] || CATEGORY['待定'];
+  const sp = itemSpecies(it);
+  const h = it.height || 6;
+  // 草本/灌木本来就没树高，给个矮一点的体量，免得跟乔木一样大
+  const hEff = cfg.spec ? h : (sp.role === '竹类' ? 5 : 2.2);
+  return Math.max(24, Math.min(54, Math.round(hEff * 5.2)));
+}
+
+/** 信息卡的内容。和点建筑、点范围色块用的是同一套写法 */
+function treePopupHtml(t) {
+  const it = itemsOf(t)[0] || {};
+  const bits = [];
+  if (t.note) bits.push(t.note);
+  if (it.height) bits.push(`高 ${it.height} 米`);
+  if (it.dbh) bits.push(`胸径 ${it.dbh} 厘米`);
+  if (Array.isArray(t.poly) && t.poly.length >= 3) bits.push('圈过范围');
+  if (t.recorder) bits.push(`记录人 ${t.recorder}`);
+  return `<div style="font-family:inherit">
+      <div style="font-weight:650;font-size:14px">${escapeHtml(speciesLabel(t))}
+        <span style="font-weight:500;color:#7a8a75;font-size:12px">${
+          escapeHtml(amountText(t))}</span></div>
+      ${bits.length ? `<div style="font-size:12px;color:#5a6b55;margin-top:3px">${
+        escapeHtml(bits.join(' · '))}</div>` : ''}
+    </div>`;
+}
+
+/** 生成形状图例。用同一套 PLANT_SHAPES，所以改了形状图例自动跟着变，
+    不会出现"图例和实际标记对不上"这种问题。
+    只在三维里显示 —— 平面的标记是带图标的圆点，用的不是这套形状。 */
+function buildPlantLegend() {
+  const box = $('plant-legend');
+  const rows = $('plant-legend-rows');
+  if (!box || !rows || rows.dataset.done) return;
+
+  // 图例用中性灰，免得被误当成"某个树种的颜色"
+  const GREY = '#8a9a84';
+  const ORDER = ['乔木', '灌木或藤木', '草本', '竹类', '待定'];
+  const LABEL = { '灌木或藤木': '灌木', '待定': '未定' };
+
+  rows.innerHTML = ORDER.map((cat) => `
+    <span class="pl-row">
+      <svg viewBox="0 0 32 32" width="19" height="19" style="--c:${GREY}">${
+        PLANT_SHAPES[cat] || SHAPE_UNKNOWN}</svg>
+      ${escapeHtml(LABEL[cat] || cat)}
+    </span>`).join('');
+  rows.dataset.done = '1';
+}
+
+/** 造一个植物标记的 DOM 元素 */
+function makePlantMarker(t) {
+  const it = itemsOf(t)[0] || {};
+  const cat = itemCategory(it);
+  const sp = speciesById(it.species);
+  const px = plantMarkerSize(t);
+
+  const el = document.createElement('div');
+  el.className = 'plant-3d';
+  el.dataset.tid = t.id;
+  el.style.setProperty('--c', sp.color);
+  el.style.width = `${px}px`;
+  el.style.height = `${px}px`;
+  // 锚点用的是 center，把图形上提半个高度，让"树根"落在记录点上。
+  // 必须用像素，不能用百分比（见 app.css 里的说明）
+  el.style.marginTop = `${-Math.round(px / 2)}px`;
+  // 把记录挂在元素上，筛选时不用回头查列表
+  el.__tree = t;
+
+  // 角标复用平面视图那套（一处几种显示「N种」，多于一株显示株数）
+  const badge = pinBadge(t);
+  el.innerHTML = `<svg viewBox="0 0 32 32" width="${px}" height="${px}">${
+    PLANT_SHAPES[cat] || SHAPE_UNKNOWN}</svg>${badge || ''}`;
+
+  el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!VIEW3D.map) return;
+    new maplibregl.Popup({ closeButton: true, maxWidth: '260px' })
+      .setLngLat([t.lon, t.lat])
+      .setHTML(treePopupHtml(t))
+      .addTo(VIEW3D.map);
+  });
+  return el;
+}
+
+/** 重建全部植物标记。数据变了、切到三维时调用 */
+function rebuildTreeMarkers() {
+  const map3 = VIEW3D.map;
+  if (!map3 || !VIEW3D.ready) return;
+
+  for (const mk of VIEW3D.treeMarkers) mk.remove();
+  VIEW3D.treeMarkers = [];
+
+  for (const t of state.trees) {
+    if (!t.lat || !t.lon) continue;
+    // anchor 用 center 而不是 bottom：三维是倾斜视角，bottom 锚点会把
+    // 标记往画面下方推上千像素、直接推出屏幕（实测踩过）。
+    // 想让"树根"看着贴地，改用 CSS 往下挪一点，比动锚点稳。
+    const mk = new maplibregl.Marker({ element: makePlantMarker(t), anchor: 'center' })
+      .setLngLat([t.lon, t.lat])
+      .addTo(map3);
+    VIEW3D.treeMarkers.push(mk);
+  }
+
+  // 图层开关和筛选状态在重建后要接上
+  setTreeMarkersVisible($('ly-trees') ? $('ly-trees').checked : true);
+  if (VIEW3D.speciesFilter) applyMarkerFilter();
+}
+
+/** 植物标记的显隐（走 DOM，不能靠图层那套） */
+function setTreeMarkersVisible(on) {
+  for (const mk of VIEW3D.treeMarkers) {
+    mk.getElement().style.display = on ? '' : 'none';
+  }
+}
+
+/** 树种筛选：没选中的标记变淡变小，但仍看得见 */
+function applyMarkerFilter() {
+  const chosen = VIEW3D.speciesFilter;
+  for (const mk of VIEW3D.treeMarkers) {
+    const el = mk.getElement();
+    const t = el.__tree;
+    if (!t) continue;
+    // 一处几种：任一个树种被选中就算选中
+    const names = itemsOf(t).map(itemLabel);
+    el.classList.toggle('dim', chosen ? !names.some((n) => chosen.has(n)) : false);
+  }
 }
 
 /** 取多边形几何的中心点（经纬度） */
@@ -507,6 +615,7 @@ function syncTrees3D() {
   VIEW3D.syncTimer = setTimeout(() => {
     if (VIEW3D.ready && VIEW3D.map) {
       rebuildTreeSource(VIEW3D.map);
+      rebuildTreeMarkers();
       if (VIEW3D.speciesFilter) applySpeciesFilter();
     }
   }, 120);
@@ -517,14 +626,14 @@ function invalidateTrees3D() {
   VIEW3D.lastTreeSig = null;
 }
 
-/** 绑定树木的点击/悬停事件（图层重建后要重新绑，所以用动态图层名） */
+/** 绑定「圈过范围」色块的点击/悬停（图层重建后要重新绑，所以用动态图层名）。
+    单点记录改由 DOM 标记处理，事件在 makePlantMarker 里绑。 */
 function bindTreeEvents(map3) {
   const L = VIEW3D.treeLayers;
-  if (!L || !L.canopy) return;
-  if (map3._treeEventsBoundFor === L.canopy) return;   // 这组图层已经绑过了
-  map3._treeEventsBoundFor = L.canopy;
+  if (!L || !L.area) return;
+  if (map3._treeEventsBoundFor === L.area) return;   // 这一层已经绑过了
+  map3._treeEventsBoundFor = L.area;
 
-  // 点色块和点圆点都给同样的弹窗。
   // 用 e.lngLat（点击处）而不是 f.geometry.coordinates ——
   // 面要素的 coordinates 是嵌套数组，直接传进去弹窗会算错位置。
   const openPopup = (e) => {
@@ -535,7 +644,7 @@ function bindTreeEvents(map3) {
     if (p.note) bits.push(p.note);
     if (p.height) bits.push(`高 ${p.height} 米`);
     if (p.dbh) bits.push(`胸径 ${p.dbh} 厘米`);
-    if (p.kind === 'area') bits.push('圈过范围');
+    bits.push('圈过范围');
     if (p.recorder) bits.push(`记录人 ${p.recorder}`);
     new maplibregl.Popup({ closeButton: true, maxWidth: '260px' })
       .setLngLat(e.lngLat)
@@ -550,27 +659,21 @@ function bindTreeEvents(map3) {
       .addTo(map3);
   };
 
-  const clickable = [L.canopy, L.area].filter(Boolean);
-  map3.on('click', clickable, openPopup);
-  map3.on('mouseenter', clickable, () => { map3.getCanvas().style.cursor = 'pointer'; });
-  map3.on('mouseleave', clickable, () => { map3.getCanvas().style.cursor = ''; });
+  map3.on('click', L.area, openPopup);
+  map3.on('mouseenter', L.area, () => { map3.getCanvas().style.cursor = 'pointer'; });
+  map3.on('mouseleave', L.area, () => { map3.getCanvas().style.cursor = ''; });
 }
 
-/** 加树的三个图层。图层名带序号，避免复用被删过的名字（原因见 rebuildTreeSource） */
+/** 加树木图层。现在只剩「圈过范围」的色块 —— 单点记录改由 DOM 标记画（见 makePlantMarker）。
+    图层名带序号，避免复用被删过的名字（原因见 rebuildTreeSource） */
 function addTreeLayers(map3, srcId, seq) {
   srcId = srcId || VIEW3D.treeSourceId;
   seq = seq || ++treeSourceSeq;
-  const L = {
-    area: `tarea_${seq}`,
-    shadow: `tshadow_${seq}`,
-    canopy: `tcanopy_${seq}`,
-    count: `tcount_${seq}`,
-  };
+  const L = { area: `tarea_${seq}` };
   VIEW3D.treeLayers = L;
 
   // 圈出的范围：铺一块半透明色块。
-  // 必须加在最底下，否则会盖住树冠的圆点。
-  // 圆点图层只画点几何，所以色块和圆点可以共用同一个数据源。
+  // 单点记录不在这里画（DOM 标记负责），所以这层只画面几何。
   map3.addLayer({
     id: L.area,
     type: 'fill',
@@ -580,65 +683,6 @@ function addTreeLayers(map3, srcId, seq) {
       'fill-color': ['get', 'color'],
       'fill-opacity': ['case', ['get', 'dim'], 0.08, 0.3],
       'fill-outline-color': ['get', 'color'],
-    },
-  });
-
-  // 脚下阴影
-  map3.addLayer({
-    id: L.shadow,
-    type: 'circle',
-    source: srcId,
-    paint: {
-      'circle-radius': ['interpolate', ['linear'], ['zoom'],
-        15, ['*', ['get', 'r'], 1.3],
-        19, ['*', ['get', 'r'], 3.6],
-      ],
-      'circle-color': '#14320f',
-      'circle-opacity': 0.28,
-      'circle-blur': 0.6,
-    },
-  });
-
-  // 树冠本体
-  map3.addLayer({
-    id: L.canopy,
-    type: 'circle',
-    source: srcId,
-    paint: {
-      // 被筛选掉的树半径缩到 55%，仍可见但不抢眼
-      'circle-radius': ['interpolate', ['linear'], ['zoom'],
-        15, ['*', ['*', ['get', 'r'], 1.7], ['case', ['get', 'dim'], 0.55, 1.0]],
-        17, ['*', ['*', ['get', 'r'], 2.8], ['case', ['get', 'dim'], 0.55, 1.0]],
-        19, ['*', ['*', ['get', 'r'], 5.2], ['case', ['get', 'dim'], 0.55, 1.0]],
-      ],
-      'circle-color': ['get', 'color'],
-      'circle-opacity': ['case', ['get', 'dim'], 0.22, 0.96],
-      'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 15, 1.6, 19, 3],
-      'circle-stroke-color': '#ffffff',
-      'circle-stroke-opacity': ['case', ['get', 'dim'], 0.25, 0.95],
-    },
-  });
-
-  // 数量角标：用手绘的小圆点标数量，不用 symbol 文字图层。
-  // 踩过的坑：symbol 图层要加载远程字体（text-font），字体拉不到时会
-  // 连带把整个数据源的渲染卡住 —— 表现为圆点图层也一个都不显示。
-  // 数量改用「加大圆点 + 加粗描边」表达，彻底避开字体依赖。
-  map3.addLayer({
-    id: L.count,
-    type: 'circle',
-    source: srcId,
-    filter: ['>', ['get', 'count'], 1],
-    paint: {
-      'circle-radius': ['interpolate', ['linear'], ['zoom'],
-        15, ['*', ['get', 'r'], 1.7],
-        17, ['*', ['get', 'r'], 2.8],
-        19, ['*', ['get', 'r'], 5.2],
-      ],
-      // 多条记录叠一本时加一圈深色描边，区分"这一处有多棵"
-      'circle-color': 'rgba(0,0,0,0)',
-      'circle-stroke-width': 2.5,
-      'circle-stroke-color': '#1c2419',
-      'circle-stroke-opacity': ['case', ['get', 'dim'], 0.2, 0.9],
     },
   });
 
@@ -662,6 +706,8 @@ async function setView(mode) {
     // 等地图彻底 idle（瓦片渲染完、worker 就绪）再建树木图层。
     // 实测：太早建源会让那个源永久不渲染。
     await waitIdle(VIEW3D.map, 4000);
+    buildPlantLegend();
+    $('plant-legend').classList.remove('hidden');
     syncTrees3D();
     // 筛选状态在切回来时要恢复
     if (VIEW3D.speciesFilter) applySpeciesFilter();
@@ -673,6 +719,7 @@ async function setView(mode) {
     stopOrbit();
     $('tools-3d').classList.add('hidden');
     $('filter-panel').classList.add('hidden');
+    $('plant-legend').classList.add('hidden');
     if (map) map.invalidateSize();
     updateModeBar();
   }
@@ -784,19 +831,21 @@ function openFilterPanel() {
   panel.classList.remove('hidden');
 }
 
-/** 把筛选结果应用到三维树木样式 */
+/** 把筛选结果应用到三维视图。
+    单点记录由 DOM 标记表现（颜色淡、缩一圈），
+    圈过的范围色块由图层表现。 */
 function applySpeciesFilter() {
   const map3 = VIEW3D.map;
   const L = VIEW3D.treeLayers || {};
-  if (!map3 || !VIEW3D.ready || !L.canopy) return;
-  if (!map3.getLayer(L.canopy)) return;
+  if (!map3 || !VIEW3D.ready) return;
 
-  // 更新数据的 "on" 字段
+  // 只更新范围色块的 dim 字段（点要素的 dim 由 DOM 标记那边管）
   const chosen = VIEW3D.speciesFilter;
   const src = map3.getSource(VIEW3D.treeSourceId);
   if (src && src._data) {
     const feats = src._data.features.map((f) => {
       const p = f.properties;
+      if (p.kind !== 'area') return f;
       // 一处几种：任一个树种被选中就正常显示
       const list = p.speciesList || [p.name];
       p.dim = chosen ? !list.some((nm) => chosen.has(nm)) : false;
@@ -805,23 +854,15 @@ function applySpeciesFilter() {
     src.setData({ type: 'FeatureCollection', features: feats });
   }
 
-  // 变暗变小，但保留可见
-  const dimR = ['case', ['get', 'dim'], 0.55, 1.0];
-
   try {
-    map3.setPaintProperty(L.canopy, 'circle-opacity', ['case', ['get', 'dim'], 0.22, 0.96]);
-    map3.setPaintProperty(L.canopy, 'circle-radius', ['interpolate', ['linear'], ['zoom'],
-      15, ['*', ['*', ['get', 'r'], 1.7], dimR],
-      17, ['*', ['*', ['get', 'r'], 2.8], dimR],
-      19, ['*', ['*', ['get', 'r'], 5.2], dimR],
-    ]);
-    map3.setPaintProperty(L.canopy, 'circle-stroke-opacity',
-      ['case', ['get', 'dim'], 0.25, 0.95]);
-    map3.setPaintProperty(L.shadow, 'circle-opacity',
-      ['case', ['get', 'dim'], 0.06, 0.28]);
-    map3.setPaintProperty(L.count, 'circle-stroke-opacity',
-      ['case', ['get', 'dim'], 0.2, 0.9]);
+    if (L.area && map3.getLayer(L.area)) {
+      map3.setPaintProperty(L.area, 'fill-opacity',
+        ['case', ['get', 'dim'], 0.08, 0.3]);
+    }
   } catch (e) { /* 图层可能正在重建，忽略 */ }
+
+  // DOM 标记不吃图层的样式，单独应用一次
+  applyMarkerFilter();
 }
 
 /** 恢复全部显示 */

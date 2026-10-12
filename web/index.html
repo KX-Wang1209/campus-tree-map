@@ -7,13 +7,13 @@
 <!-- 标签页图标：SVG 所有现代浏览器都认。
      苹果的 apple-touch-icon 用 PNG —— iOS 不支持 SVG 图标。
      ?v= 防缓存：图标改了要能换掉，不然手机上一直显示旧的。 -->
-<link rel="icon" type="image/svg+xml" href="logo.svg?v=27">
-<link rel="apple-touch-icon" href="logo.png?v=27">
+<link rel="icon" type="image/svg+xml" href="logo.svg?v=30">
+<link rel="apple-touch-icon" href="logo.png?v=30">
 <link rel="stylesheet" href="vendor/leaflet.css">
 <link rel="stylesheet" href="vendor/maplibre-gl.css">
 <!-- ?v=N 是防缓存：改了下面这些文件就把数字加一，
      否则学生手机（尤其微信）会一直用旧的缓存副本 -->
-<link rel="stylesheet" href="app.css?v=27">
+<link rel="stylesheet" href="app.css?v=30">
 </head>
 <body>
 
@@ -81,6 +81,12 @@
     <hr>
     <label><input type="checkbox" id="ly-trees" checked> 植物标记</label>
     <label><input type="checkbox" id="ly-photos" checked> 照片标记</label>
+    <!-- 形状图例：只在三维里有意义（平面用带图标的圆点）。
+         内容由 view3d.js 用同一套形状定义生成，不会和实际标记走样 -->
+    <div id="plant-legend" class="hidden">
+      <p class="pl-title">形状表示类别</p>
+      <div id="plant-legend-rows" class="pl-rows"></div>
+    </div>
   </div>
 </div>
 
@@ -414,10 +420,10 @@
 <div id="toast" class="toast hidden"></div>
 
 <!-- 带版本号：这个文件换过内容，不加的话浏览器会一直用旧的缓存副本 -->
-<script src="vendor/cloudbase.js?v=27.10.1"></script>
+<script src="vendor/cloudbase.js?v=30.10.1"></script>
 <script src="vendor/leaflet.js"></script>
 <script src="vendor/maplibre-gl.js"></script>
-<script src="view3d.js?v=27"></script>
-<script src="app.js?v=27"></script>
+<script src="view3d.js?v=30"></script>
+<script src="app.js?v=30"></script>
 </body>
 </html>

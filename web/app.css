@@ -52,8 +52,8 @@ html, body {
   flex: none; display: block;
   width: 26px; height: 26px;
   background: #fff;
-  -webkit-mask: url(logo.svg?v=27) center/contain no-repeat;
-  mask: url(logo.svg?v=27) center/contain no-repeat;
+  -webkit-mask: url(logo.svg?v=30) center/contain no-repeat;
+  mask: url(logo.svg?v=30) center/contain no-repeat;
 }
 /* 标题分两行：校名在上、应用名在下。
    并成一行时手机上会挤到放不下，所以固定两行。 */
@@ -253,6 +253,51 @@ html, body {
 /* 三维视图里的建筑名。DOM 标记，不用 symbol 文字图层（原因见 view3d.js）。
    底色由共用的 .lbl-text 画 —— 这样平面和三维的标注长得一样 */
 .bld-label-3d { pointer-events: none; }
+
+/* 三维植物标记的形状图例 */
+#plant-legend { margin-top: 7px; padding-top: 7px; border-top: 1px solid #e8ede6; }
+.pl-title { margin: 0 0 5px; font-size: 10.5px; color: var(--ink-2); }
+.pl-rows { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.pl-row { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--ink); }
+.pl-row svg { display: block; flex: none; }
+
+/* 三维里的植物标记：形状表示类别，颜色表示树种，大小跟树高走。
+   标记底边贴着地面（anchor: bottom），像是长在地上。 */
+.plant-3d {
+  position: relative;
+  cursor: pointer;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,.5));
+  transition: opacity .15s, transform .15s;
+  /* 注意：这里不能用百分比 margin 做垂直偏移。
+     CSS 的百分比 margin 按【容器宽度】算，容器宽 1470px 时
+     margin-top:-18% 会变成 -265px，把标记整体推出屏幕（踩过这个坑）。
+     垂直偏移由 JS 按每个标记的实际像素高度设（见 makePlantMarker）。 */
+}
+.plant-3d svg { display: block; }
+/* 被筛选掉的：缩小 + 变淡，但不藏起来（还能看到这一带有东西） */
+.plant-3d.dim { opacity: .32; transform: scale(.62); transform-origin: 50% 100%; }
+
+/* 角标沿用平面视图那套（.pin-count / .pin-cam），换个定位贴合树形 */
+.plant-3d .pin-count {
+  position: absolute; top: -5px; right: -8px;
+  background: #fff; color: var(--ink);
+  border: 1.5px solid var(--green);
+  border-radius: 9px; min-width: 17px; height: 17px;
+  font-size: 10px; font-weight: 700; line-height: 14px;
+  text-align: center; padding: 0 3px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.3);
+}
+.plant-3d .pin-count.multi { background: #5e35b1; color: #fff; border-color: #4527a0; }
+.plant-3d .pin-count.several {
+  border-style: dashed; border-color: #78909c;
+  color: #546e7a; padding: 0 4px; font-size: 9.5px;
+}
+.plant-3d .pin-cam {
+  position: absolute; bottom: -4px; left: -6px;
+  background: #fff; border-radius: 7px;
+  font-size: 9px; line-height: 15px; height: 15px; padding: 0 3px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.3);
+}
 
 /* 树木标记 */
 .tree-pin { position: relative; }
