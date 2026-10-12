@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="vendor/maplibre-gl.css">
 <!-- ?v=N 是防缓存：改了下面这些文件就把数字加一，
      否则学生手机（尤其微信）会一直用旧的缓存副本 -->
-<link rel="stylesheet" href="app.css?v=20">
+<link rel="stylesheet" href="app.css?v=21">
 </head>
 <body>
 
@@ -348,6 +348,7 @@
       📷 <b>照片会跟着记录一起上传</b>，每条最多 3 张。
       上传前会自动压小（约 150KB），所以不费你的流量。<br>
       老师和同学<b>都能看到你拍的照片</b>——点开那条记录就会显示。<br>
+      <b>想看大图就点一下那张小图</b>，会整屏放大；有好几张时左右箭头翻页。<br>
       地图和清单上只会出现一个小 <b>📷</b> 角标，<b>不会自动下载照片</b>，
       要点开某条记录才去取图。这是为了省流量，手机上也更快。
     </p>
@@ -359,6 +360,10 @@
       <li>要给人老师权限，在同一个面板里点「升为老师」。被移除的人立刻变回访客，只能看。</li>
       <li>「清单」可以导出 CSV（含全部记录），直接在 Excel 里打开。
           <b>一处记了几种就会出几行</b>，行首的记录 ID 相同，能看出是同一处。</li>
+      <li><b>照片想单独要一份，就点「导出含照片」。</b>
+          会下载一个 zip，里面是照片原图，外加一张清单（哪条记录对应哪几张）
+          和一份完整数据。交给学校、或者自己留档，用这个。<br>
+          照片多的话要等十几秒——它得一张张从云端取回来。</li>
       <li>「统计」看各类构成和总量，汇报时可直接截屏。</li>
       <li>学生记错了、记重了，你自己登录后就能删——不用再跑数据库。</li>
     </ul>
@@ -367,7 +372,7 @@
     <p class="foot-note">
       底图：Esri World Imagery，<b>2025 年 5 月 20 日</b>拍摄，0.34 米分辨率<br>
       建筑轮廓：OpenStreetMap（ODbL 许可）<br>
-      物种库：学校《校园植物名录（26年10月）》，共 65 种<br>
+      物种库：学校《校园植物名录（26年10月）》，共 70 种<br>
       植物数据：由师生实地记录，存在腾讯云开发（上海）
     </p>
     <p class="tip">
@@ -403,7 +408,7 @@
 <script src="vendor/cloudbase.js?v=3.10.1"></script>
 <script src="vendor/leaflet.js"></script>
 <script src="vendor/maplibre-gl.js"></script>
-<script src="view3d.js?v=20"></script>
-<script src="app.js?v=20"></script>
+<script src="view3d.js?v=21"></script>
+<script src="app.js?v=21"></script>
 </body>
 </html>
