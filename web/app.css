@@ -52,8 +52,8 @@ html, body {
   flex: none; display: block;
   width: 26px; height: 26px;
   background: #fff;
-  -webkit-mask: url(logo.svg?v=30) center/contain no-repeat;
-  mask: url(logo.svg?v=30) center/contain no-repeat;
+  -webkit-mask: url(logo.svg?v=31) center/contain no-repeat;
+  mask: url(logo.svg?v=31) center/contain no-repeat;
 }
 /* 标题分两行：校名在上、应用名在下。
    并成一行时手机上会挤到放不下，所以固定两行。 */
@@ -267,15 +267,23 @@ html, body {
   position: relative;
   cursor: pointer;
   filter: drop-shadow(0 1px 2px rgba(0,0,0,.5));
-  transition: opacity .15s, transform .15s;
+  /* 只过渡透明度，绝不过渡 transform。
+     MapLibre 拖动/缩放时每一帧都在改标记的 transform 来定位，
+     这里要是给 transform 加了过渡，标记就会慢半拍地"飘"过去，
+     看着像全乱了（踩过这个坑）。 */
+  transition: opacity .15s;
   /* 注意：这里不能用百分比 margin 做垂直偏移。
      CSS 的百分比 margin 按【容器宽度】算，容器宽 1470px 时
      margin-top:-18% 会变成 -265px，把标记整体推出屏幕（踩过这个坑）。
      垂直偏移由 JS 按每个标记的实际像素高度设（见 makePlantMarker）。 */
 }
 .plant-3d svg { display: block; }
-/* 被筛选掉的：缩小 + 变淡，但不藏起来（还能看到这一带有东西） */
-.plant-3d.dim { opacity: .32; transform: scale(.62); transform-origin: 50% 100%; }
+/* 被筛选掉的：缩小 + 变淡，但不藏起来（还能看到这一带有东西）。
+   注意不能在这里写 transform —— MapLibre 用行内 transform 给标记定位，
+   外面的 transform 会把它覆盖掉，标记会跳到屏幕左上角。
+   所以缩放放在内层 svg 上。 */
+.plant-3d.dim { opacity: .34; }
+.plant-3d.dim svg { transform: scale(.62); transform-origin: 50% 100%; }
 
 /* 角标沿用平面视图那套（.pin-count / .pin-cam），换个定位贴合树形 */
 .plant-3d .pin-count {
