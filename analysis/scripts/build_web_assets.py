@@ -339,6 +339,7 @@ SPECIES = [
     {"id": "yuzan", "name": "玉簪", "role": "草本", "icon": "🌸", "color": "#b39ddb"},
     {"id": "yuanwei", "name": "鸢尾", "role": "草本", "icon": "💜", "color": "#7986cb"},
     {"id": "luwei", "name": "芦苇", "role": "草本", "icon": "🌾", "color": "#c5a880"},
+    {"id": "fanshu", "name": "番薯", "role": "草本", "icon": "🍠", "color": "#5d4037"},
     {"id": "other_cao", "name": "其他", "role": "草本", "icon": "➕", "color": "#90a4ae", "isOther": True},
     # ============ 竹类（1 种） ============
     {"id": "zaoyuanzhu", "name": "早园竹", "role": "竹类", "icon": "🎋", "color": "#00897b"},

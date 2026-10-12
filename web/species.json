@@ -492,6 +492,13 @@
   "color": "#c5a880"
  },
  {
+  "id": "fanshu",
+  "name": "番薯",
+  "role": "草本",
+  "icon": "🍠",
+  "color": "#5d4037"
+ },
+ {
   "id": "other_cao",
   "name": "其他",
   "role": "草本",
