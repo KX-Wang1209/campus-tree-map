@@ -45,7 +45,7 @@ html, body {
   box-shadow: 0 2px 12px rgba(0,0,0,.18);
 }
 .brand { display: flex; align-items: center; gap: 9px; min-width: 0; }
-.brand-mark { font-size: 24px; flex: none; }
+.brand-mark { flex: none; display: block; }
 .brand h1 {
   margin: 0; font-size: 15px; font-weight: 600;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
