@@ -52,14 +52,24 @@ html, body {
   flex: none; display: block;
   width: 26px; height: 26px;
   background: #fff;
-  -webkit-mask: url(logo.svg?v=23) center/contain no-repeat;
-  mask: url(logo.svg?v=23) center/contain no-repeat;
+  -webkit-mask: url(logo.svg?v=24) center/contain no-repeat;
+  mask: url(logo.svg?v=24) center/contain no-repeat;
 }
-.brand h1 {
-  margin: 0; font-size: 15px; font-weight: 600;
+/* 标题分两行：校名在上、应用名在下。
+   并成一行时手机上会挤到放不下，所以固定两行。 */
+.brand-title {
+  margin: 0; min-width: 0;
+  display: flex; flex-direction: column;
+  line-height: 1.25;
+}
+.brand-title .bt-school {
+  font-size: 15px; font-weight: 600;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.brand p { margin: 1px 0 0; font-size: 11px; opacity: .8; }
+.brand-title .bt-app {
+  font-size: 11.5px; font-weight: 500; opacity: .85;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .topbar-actions { display: flex; gap: 6px; flex: none; }
 
 .btn {
@@ -833,7 +843,8 @@ html, body {
 
 /* ============ 手机适配 ============ */
 @media (max-width: 600px) {
-  .brand h1 { font-size: 13px; }
+  .brand-title .bt-school { font-size: 13px; }
+  .brand-title .bt-app { font-size: 10.5px; }
   .topbar-actions .btn span { display: none; }
   .topbar-actions .btn { padding: 8px 10px; }
   #mode-bar { font-size: 11.5px; max-width: calc(100vw - 175px); padding: 6px 12px; }
@@ -844,6 +855,15 @@ html, body {
   .stat-cards { gap: 7px; }
   .stat-card .sc-num { font-size: 21px; }
   .list-tools { grid-template-columns: 1fr 110px; }
+}
+
+/* 特别窄的屏幕（320px 档）：logo 和字都缩一点，
+   否则校名会被截成「天津滨海职业学…」 */
+@media (max-width: 340px) {
+  .brand { gap: 7px; }
+  .brand-mark { width: 22px; height: 22px; }
+  .brand-title .bt-school { font-size: 12px; }
+  .brand-title .bt-app { font-size: 10px; }
 }
 
 @media (min-width: 900px) {

@@ -7,13 +7,13 @@
 <!-- 标签页图标：SVG 所有现代浏览器都认。
      苹果的 apple-touch-icon 用 PNG —— iOS 不支持 SVG 图标。
      ?v= 防缓存：图标改了要能换掉，不然手机上一直显示旧的。 -->
-<link rel="icon" type="image/svg+xml" href="logo.svg?v=23">
-<link rel="apple-touch-icon" href="logo.png?v=23">
+<link rel="icon" type="image/svg+xml" href="logo.svg?v=24">
+<link rel="apple-touch-icon" href="logo.png?v=24">
 <link rel="stylesheet" href="vendor/leaflet.css">
 <link rel="stylesheet" href="vendor/maplibre-gl.css">
 <!-- ?v=N 是防缓存：改了下面这些文件就把数字加一，
      否则学生手机（尤其微信）会一直用旧的缓存副本 -->
-<link rel="stylesheet" href="app.css?v=23">
+<link rel="stylesheet" href="app.css?v=24">
 </head>
 <body>
 
@@ -23,9 +23,11 @@
     <!-- 形状和标签页图标共用 web/logo.svg（mask 当印章用，盖成白色），
          所以这里不再内联一份重复的路径。 -->
     <span class="brand-mark" role="img" aria-label="校园植物地图"></span>
-    <div>
-      <h1>天津滨海职业学院 · 校园植物地图</h1>
-    </div>
+    <!-- 分两行：手机上并成一行会挤到放不下 -->
+    <h1 class="brand-title">
+      <span class="bt-school">天津滨海职业学院</span>
+      <span class="bt-app">校园植物地图</span>
+    </h1>
   </div>
   <div class="topbar-actions">
     <button id="btn-members" class="btn ghost hidden" title="成员管理">👥 <span>成员</span></button>
@@ -412,10 +414,10 @@
 <div id="toast" class="toast hidden"></div>
 
 <!-- 带版本号：这个文件换过内容，不加的话浏览器会一直用旧的缓存副本 -->
-<script src="vendor/cloudbase.js?v=3.10.1"></script>
+<script src="vendor/cloudbase.js?v=24.10.1"></script>
 <script src="vendor/leaflet.js"></script>
 <script src="vendor/maplibre-gl.js"></script>
-<script src="view3d.js?v=23"></script>
-<script src="app.js?v=23"></script>
+<script src="view3d.js?v=24"></script>
+<script src="app.js?v=24"></script>
 </body>
 </html>
