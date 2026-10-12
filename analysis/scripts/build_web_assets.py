@@ -304,6 +304,8 @@ SPECIES = [
     {"id": "shishu", "name": "柿树", "role": "乔木", "icon": "🍊", "color": "#ff7043"},
     {"id": "baila", "name": "白蜡", "role": "乔木", "icon": "🌳", "color": "#43a047"},
     {"id": "maopaotong", "name": "毛泡桐", "role": "乔木", "icon": "💜", "color": "#ab47bc"},
+    {"id": "yousong", "name": "油松", "role": "乔木", "icon": "🌲", "color": "#004d40"},
+    {"id": "jinyehuai", "name": "金叶槐", "role": "乔木", "icon": "🍂", "color": "#ffd600"},
     {"id": "other_qiao", "name": "其他", "role": "乔木", "icon": "➕", "color": "#90a4ae", "isOther": True},
     # ============ 灌木 / 藤木（24 种） ============
     {"id": "xiaolongbai", "name": "小龙柏", "role": "灌木或藤木", "icon": "🌲", "color": "#1b5e20"},
@@ -330,11 +332,13 @@ SPECIES = [
     {"id": "lingxiao", "name": "凌霄", "role": "灌木或藤木", "icon": "🌼", "color": "#ff7043"},
     {"id": "jinyinmu", "name": "金银木", "role": "灌木或藤木", "icon": "🌼", "color": "#f9a825"},
     {"id": "fengweilan", "name": "凤尾兰", "role": "灌木或藤木", "icon": "🌿", "color": "#a5d6a7"},
+    {"id": "ziyexiaobo", "name": "紫叶小檗", "role": "灌木或藤木", "icon": "🌿", "color": "#6a1b9a"},
     {"id": "other_guan", "name": "其他", "role": "灌木或藤木", "icon": "➕", "color": "#90a4ae", "isOther": True},
     # ============ 草本（3 种） ============
     {"id": "feicai", "name": "费菜", "role": "草本", "icon": "🌼", "color": "#ffd54f"},
     {"id": "yuzan", "name": "玉簪", "role": "草本", "icon": "🌸", "color": "#b39ddb"},
     {"id": "yuanwei", "name": "鸢尾", "role": "草本", "icon": "💜", "color": "#7986cb"},
+    {"id": "luwei", "name": "芦苇", "role": "草本", "icon": "🌾", "color": "#c5a880"},
     {"id": "other_cao", "name": "其他", "role": "草本", "icon": "➕", "color": "#90a4ae", "isOther": True},
     # ============ 竹类（1 种） ============
     {"id": "zaoyuanzhu", "name": "早园竹", "role": "竹类", "icon": "🎋", "color": "#00897b"},

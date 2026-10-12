@@ -259,6 +259,20 @@
   "color": "#ab47bc"
  },
  {
+  "id": "yousong",
+  "name": "油松",
+  "role": "乔木",
+  "icon": "🌲",
+  "color": "#004d40"
+ },
+ {
+  "id": "jinyehuai",
+  "name": "金叶槐",
+  "role": "乔木",
+  "icon": "🍂",
+  "color": "#ffd600"
+ },
+ {
   "id": "other_qiao",
   "name": "其他",
   "role": "乔木",
@@ -435,6 +449,13 @@
   "color": "#a5d6a7"
  },
  {
+  "id": "ziyexiaobo",
+  "name": "紫叶小檗",
+  "role": "灌木或藤木",
+  "icon": "🌿",
+  "color": "#6a1b9a"
+ },
+ {
   "id": "other_guan",
   "name": "其他",
   "role": "灌木或藤木",
@@ -462,6 +483,13 @@
   "role": "草本",
   "icon": "💜",
   "color": "#7986cb"
+ },
+ {
+  "id": "luwei",
+  "name": "芦苇",
+  "role": "草本",
+  "icon": "🌾",
+  "color": "#c5a880"
  },
  {
   "id": "other_cao",
