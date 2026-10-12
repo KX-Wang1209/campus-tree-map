@@ -632,6 +632,41 @@ html, body {
 }
 .photo-loading { display: inline-block; width: 62px; height: 62px; line-height: 62px;
   text-align: center; border-radius: 9px; background: #f4f6f2; color: #9e9e9e; font-size: 12px; }
+/* 点缩略图看大图 */
+.photo-thumb img { cursor: zoom-in; }
+
+/* 看大图：整屏黑底，图片按屏幕缩放，两边翻页 */
+.photo-view {
+  position: fixed; inset: 0; z-index: 2000;
+  background: rgba(8,12,7,.94);
+  display: flex; align-items: center; justify-content: center;
+}
+.photo-view img {
+  max-width: 94vw; max-height: 88vh;
+  object-fit: contain; border-radius: 6px;
+  box-shadow: 0 8px 40px rgba(0,0,0,.6);
+}
+.pv-btn {
+  position: absolute; border: none; cursor: pointer;
+  background: rgba(255,255,255,.14); color: #fff;
+  border-radius: 50%; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+.pv-btn:hover { background: rgba(255,255,255,.28); }
+.pv-close { top: 14px; right: 14px; width: 40px; height: 40px; font-size: 17px; }
+.pv-prev, .pv-next {
+  top: 50%; transform: translateY(-50%);
+  width: 46px; height: 46px; font-size: 30px; padding-bottom: 5px;
+}
+.pv-prev { left: 12px; }
+.pv-next { right: 12px; }
+.pv-cap {
+  position: absolute; left: 0; right: 0; bottom: 16px;
+  margin: 0; text-align: center;
+  color: rgba(255,255,255,.82); font-size: 12.5px;
+}
+/* 只有一张时不显示翻页键 */
+.photo-view.single .pv-prev, .photo-view.single .pv-next { display: none; }
 /* 清单里只标照片数量，不加载图片 */
 .tr-cam { font-size: 11px; color: var(--ink-2); white-space: nowrap; }
 

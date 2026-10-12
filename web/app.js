@@ -849,7 +849,7 @@ async function initMap() {
   // campus.json 跟着 app.js 一起改版本号：
   // 它不经过 index.html，不加 ?v= 的话手机（尤其微信）会一直读缓存的旧底图，
   // 改了建筑名也看不见
-  campusData = await fetch('campus.json?v=19').then((r) => r.json());
+  campusData = await fetch('campus.json?v=20').then((r) => r.json());
 
   buildBaseLayers();
   treeLayer = L.layerGroup().addTo(map);
@@ -1865,6 +1865,42 @@ function renderHealthChips() {
   });
 }
 
+/* ---------------------------------------------------------------
+   看大图
+   --------------------------------------------------------------- */
+const photoView = { list: [], i: 0 };
+
+/** 打开大图。list 是能直接显示的地址数组，i 是从哪张开始 */
+function openPhotoView(list, i) {
+  const ok = (list || []).filter(Boolean);
+  if (!ok.length) return;
+  photoView.list = ok;
+  photoView.i = Math.max(0, Math.min(i || 0, ok.length - 1));
+  paintPhotoView();
+  $('photo-view').classList.remove('hidden');
+}
+
+function paintPhotoView() {
+  const v = $('photo-view');
+  const n = photoView.list.length;
+  $('pv-img').src = photoView.list[photoView.i];
+  v.classList.toggle('single', n <= 1);
+  $('pv-cap').textContent = n > 1 ? `${photoView.i + 1} / ${n}` : '';
+}
+
+function stepPhotoView(d) {
+  const n = photoView.list.length;
+  if (n <= 1) return;
+  photoView.i = (photoView.i + d + n) % n;
+  paintPhotoView();
+}
+
+function closePhotoView() {
+  $('photo-view').classList.add('hidden');
+  $('pv-img').src = '';      // 断开引用，别让大图一直占内存
+  photoView.list = [];
+}
+
 async function renderPhotoPreview() {
   const box = $('photo-preview');
   const srcs = await photoSrcs(state.pendingPhotos);
@@ -1873,6 +1909,10 @@ async function renderPhotoPreview() {
       srcs[i] ? `<img src="${srcs[i]}" alt="">` : '<span class="photo-loading">…</span>'
     }<button type="button" data-i="${i}">✕</button></div>`
   ).join('');
+  // 点图看大图（点右上角的 ✕ 是删除，别混在一起）
+  box.querySelectorAll('img').forEach((el, i) => {
+    el.addEventListener('click', () => openPhotoView(srcs, i));
+  });
   box.querySelectorAll('button').forEach((el) => {
     el.addEventListener('click', () => {
       state.pendingPhotos.splice(Number(el.dataset.i), 1);
@@ -2591,6 +2631,158 @@ function renderStats() {
 /* ---------------------------------------------------------------
    导入 / 导出
    --------------------------------------------------------------- */
+
+/* 打包成 zip 用。照片本身已经是 JPEG（存之前压过了），再压一遍没意义，
+   所以全部用「不压缩」方式存 —— 代码短，而且不会拖慢导出。
+   标准 zip 格式：每份文件一条「本地头 + 数据」，最后接一份「中央目录」。 */
+function crc32(bytes) {
+  let c, table = crc32._t;
+  if (!table) {
+    table = crc32._t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      c = n;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      table[n] = c >>> 0;
+    }
+  }
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) crc = table[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+/** files: [{ name: 'a/b.jpg', data: Uint8Array }] → Blob（一个 zip） */
+function makeZip(files) {
+  const enc = new TextEncoder();
+  const parts = [];          // 待拼的字节块
+  const central = [];        // 中央目录条目
+  let offset = 0;
+
+  const u16 = (n) => [n & 0xFF, (n >> 8) & 0xFF];
+  const u32 = (n) => [n & 0xFF, (n >> 8) & 0xFF, (n >> 16) & 0xFF, (n >>> 24) & 0xFF];
+
+  for (const f of files) {
+    const nameBytes = enc.encode(f.name);
+    const crc = crc32(f.data);
+    const size = f.data.length;
+
+    // 本地文件头
+    const head = [
+      ...u32(0x04034b50), ...u16(20), ...u16(0x0800),   // 0x0800 = 文件名按 UTF-8
+      ...u16(0), ...u16(0), ...u16(0),                   // 时间日期（不填）
+      ...u32(crc), ...u32(size), ...u32(size),
+      ...u16(nameBytes.length), ...u16(0),
+    ];
+    parts.push(new Uint8Array(head), nameBytes, f.data);
+
+    central.push([
+      ...u32(0x02014b50), ...u16(20), ...u16(20), ...u16(0x0800),
+      ...u16(0), ...u16(0), ...u16(0),
+      ...u32(crc), ...u32(size), ...u32(size),
+      ...u16(nameBytes.length), ...u16(0), ...u16(0),
+      ...u16(0), ...u16(0), ...u32(0), ...u32(offset),
+      ...nameBytes,
+    ]);
+    offset += head.length + nameBytes.length + size;
+  }
+
+  const centralStart = offset;
+  let centralSize = 0;
+  for (const c of central) { parts.push(new Uint8Array(c)); centralSize += c.length; }
+
+  parts.push(new Uint8Array([
+    ...u32(0x06054b50), ...u16(0), ...u16(0),
+    ...u16(files.length), ...u16(files.length),
+    ...u32(centralSize), ...u32(centralStart), ...u16(0),
+  ]));
+
+  return new Blob(parts, { type: 'application/zip' });
+}
+
+/** 导出：记录表 + 照片文件，一起打包成 zip */
+async function exportWithPhotos() {
+  if (!state.trees.length) return toast('还没有数据可导出', true);
+  const withPhoto = state.trees.filter((t) => t.photos && t.photos.length);
+  if (!withPhoto.length) return toast('现在还没有照片可导出', true);
+
+  const btn = $('btn-export-zip');
+  const label = btn.textContent;
+  btn.disabled = true;
+
+  try {
+    // 1) 先把每条记录的照片地址换成能下载的链接
+    const all = [];
+    for (const t of withPhoto) for (const p of t.photos) if (!all.includes(p)) all.push(p);
+    let done = 0;
+    for (const p of all) {
+      btn.textContent = `取照片… ${++done}/${all.length}`;
+      await photoSrcs([p]);
+    }
+
+    // 2) 逐张下载。文件名带记录 ID，能对回表里的行
+    const files = [];
+    const manifest = [];   // 清单：哪个记录对应哪几张图
+    for (const t of withPhoto) {
+      const names = [];
+      const srcs = await photoSrcs(t.photos);
+      for (let i = 0; i < srcs.length; i++) {
+        if (!srcs[i]) continue;
+        btn.textContent = `下载… ${files.length + 1}`;
+        try {
+          const blob = await (await fetch(srcs[i])).blob();
+          const buf = new Uint8Array(await blob.arrayBuffer());
+          const nm = `photos/${t.id}_${i + 1}.jpg`;
+          files.push({ name: nm, data: buf });
+          names.push(nm);
+        } catch (e) { /* 这一张取不到就跳过，别整个导出失败 */ }
+      }
+      if (names.length) {
+        const items = itemsOf(t);
+        manifest.push({
+          记录ID: t.id,
+          种名: items.map(itemLabel).join(' · '),
+          记录人: t.recorder || '',
+          时间: fmtTime(t.created),
+          纬度: t.lat, 经度: t.lon,
+          照片: names.map((n) => n.replace('photos/', '')).join(' '),
+        });
+      }
+    }
+
+    if (!files.length) { toast('照片都没取到，检查一下网络', true); return; }
+
+    // 3) 清单 + 记录表 + 照片，一起打包
+    btn.textContent = '打包中…';
+    const csv = manifest.map((r) => {
+      const head = Object.keys(r);
+      return head.map((h) => {
+        const s = String(r[h]);
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      }).join(',');
+    });
+    const csvText = '\ufeff' + [Object.keys(manifest[0]).join(','), ...csv].join('\r\n');
+
+    const doc = {
+      project: '天津滨海职业学院校园树木地图',
+      exported: new Date().toISOString(),
+      count: state.trees.length,
+      trees: state.trees,
+    };
+
+    const zip = makeZip([
+      { name: 'photos-list.csv', data: new TextEncoder().encode(csvText) },
+      { name: 'records.json', data: new TextEncoder().encode(JSON.stringify(doc, null, 1)) },
+      ...files,
+    ]);
+
+    const who = [...new Set(state.trees.map((t) => t.recorder).filter(Boolean))].join('+');
+    downloadBlob(zip, `校园植物_含照片${who ? '_' + who : ''}_${exportStamp()}.zip`);
+    toast(`已导出 ${files.length} 张照片`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
 /* 导出的表头照着学校《校园植物名录》的列来 ——
    这份 CSV 是要交给学校的，列名对得上才好并进总表。
    四类记的东西不同，所以要分开列（株数 / 丛数 / 面积）。
@@ -2668,7 +2860,10 @@ function exportStamp() {
 }
 
 function downloadFile(content, name, mime) {
-  const blob = new Blob([content], { type: mime });
+  downloadBlob(new Blob([content], { type: mime }), name);
+}
+
+function downloadBlob(blob, name) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = name;
@@ -2869,6 +3064,22 @@ function bind() {
     e.target.value = '';   // 清空，否则同一张图第二次选不触发
   });
 
+  // 看大图
+  $('pv-close').addEventListener('click', closePhotoView);
+  $('pv-prev').addEventListener('click', (e) => { e.stopPropagation(); stepPhotoView(-1); });
+  $('pv-next').addEventListener('click', (e) => { e.stopPropagation(); stepPhotoView(1); });
+  $('photo-view').addEventListener('click', (e) => {
+    // 点图以外的地方关掉；点图本身往下一张
+    if (e.target.id === 'pv-img') stepPhotoView(1);
+    else closePhotoView();
+  });
+  document.addEventListener('keydown', (e) => {
+    if ($('photo-view').classList.contains('hidden')) return;
+    if (e.key === 'Escape') closePhotoView();
+    else if (e.key === 'ArrowLeft') stepPhotoView(-1);
+    else if (e.key === 'ArrowRight') stepPhotoView(1);
+  });
+
   // 底部加树：优先用 GPS
   $('fab-add').addEventListener('click', () => {
     if (window._myLatLng) {
@@ -2918,6 +3129,7 @@ function bind() {
 
   $('btn-export-csv').addEventListener('click', exportCSV);
   $('btn-export-json').addEventListener('click', exportJSON);
+  $('btn-export-zip').addEventListener('click', exportWithPhotos);
   $('btn-import').addEventListener('click', () => $('file-import').click());
   $('file-import').addEventListener('change', (e) => {
     if (e.target.files[0]) importFile(e.target.files[0]);
@@ -2993,7 +3205,7 @@ function bind() {
 (async function main() {
   // 和 campus.json 同理：不加 ?v= 的话，改了名录（比如新增树种）
   // 学生手机上会一直读缓存的旧版本
-  state.species = await fetch('species.json?v=19').then((r) => r.json());
+  state.species = await fetch('species.json?v=20').then((r) => r.json());
   loadTrees();
   bind();
   await initMap();

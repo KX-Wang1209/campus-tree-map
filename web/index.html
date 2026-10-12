@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="vendor/maplibre-gl.css">
 <!-- ?v=N 是防缓存：改了下面这些文件就把数字加一，
      否则学生手机（尤其微信）会一直用旧的缓存副本 -->
-<link rel="stylesheet" href="app.css?v=19">
+<link rel="stylesheet" href="app.css?v=20">
 </head>
 <body>
 
@@ -178,6 +178,7 @@
   <div class="sheet-foot">
     <button id="btn-export-csv" class="btn ghost">导出 CSV</button>
     <button id="btn-export-json" class="btn ghost">备份 JSON</button>
+    <button id="btn-export-zip" class="btn ghost">导出含照片</button>
     <button id="btn-import" class="btn ghost">导入</button>
     <input id="file-import" type="file" accept=".json,.csv" class="hidden">
   </div>
@@ -263,6 +264,15 @@
     <button id="merge-apply" class="btn primary">确认导入</button>
   </div>
 </section>
+
+<!-- ============ 看大图 ============ -->
+<div id="photo-view" class="photo-view hidden">
+  <button id="pv-close" class="pv-btn pv-close" aria-label="关闭">✕</button>
+  <button id="pv-prev" class="pv-btn pv-prev" aria-label="上一张">‹</button>
+  <img id="pv-img" alt="">
+  <button id="pv-next" class="pv-btn pv-next" aria-label="下一张">›</button>
+  <p id="pv-cap" class="pv-cap"></p>
+</div>
 
 <!-- ============ 说明弹窗 ============ -->
 <div id="help-mask" class="mask hidden"></div>
@@ -393,7 +403,7 @@
 <script src="vendor/cloudbase.js?v=3.10.1"></script>
 <script src="vendor/leaflet.js"></script>
 <script src="vendor/maplibre-gl.js"></script>
-<script src="view3d.js?v=19"></script>
-<script src="app.js?v=19"></script>
+<script src="view3d.js?v=20"></script>
+<script src="app.js?v=20"></script>
 </body>
 </html>
