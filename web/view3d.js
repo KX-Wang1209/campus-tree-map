@@ -146,7 +146,6 @@ function addCampus3D(map3) {
         properties: {
           h: f.properties.height_m || 12,
           name: f.properties.name || '建筑',
-          basis: f.properties.height_basis || '',
           levels: f.properties.levels || 0,
         },
       })),
@@ -220,7 +219,7 @@ function addCampus3D(map3) {
   // 但 queryRenderedFeatures 恒为 0）。等 load 完之后再建才可靠。
   // 所以树源交给 setView 里的 syncTrees3D() 建。
 
-  // 建筑点击显示高度来源
+  // 建筑点击：只给楼名和高度，不写高度是怎么估的（那行说明性的字省掉）
   map3.on('click', 'bld-3d', (e) => {
     const f = e.features && e.features[0];
     if (!f) return;
@@ -231,8 +230,7 @@ function addCampus3D(map3) {
         `<div style="font-family:inherit">
            <div style="font-weight:650;font-size:14px">${escapeHtml(p.name)}</div>
            <div style="font-size:12px;color:#5a6b55;margin-top:3px">
-             约 ${p.h} 米${p.levels ? `（${p.levels} 层）` : ''}<br>
-             <span style="opacity:.75">${escapeHtml(p.basis)}</span>
+             约 ${p.h} 米${p.levels ? `（${p.levels} 层）` : ''}
            </div>
          </div>`
       )

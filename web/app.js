@@ -905,8 +905,7 @@ function buildBaseLayers() {
     onEachFeature: (f, layer) => {
       const p = f.properties;
       const h = p.height_m ? ` · 约 ${p.height_m} 米(${p.levels || '?'}层)` : '';
-      const basis = p.height_basis ? `<br><span style="font-size:11px;opacity:.7">${escapeHtml(p.height_basis)}</span>` : '';
-      layer.bindTooltip(`<b>${escapeHtml(p.name || '建筑')}</b>${h}${basis}`, { sticky: true });
+      layer.bindTooltip(`<b>${escapeHtml(p.name || '建筑')}</b>${h}`, { sticky: true });
     },
   }).addTo(map);
 
