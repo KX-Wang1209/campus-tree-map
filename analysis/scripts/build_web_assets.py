@@ -128,6 +128,50 @@ def normalize_name(name: str) -> str:
 
 # 效果图上标了、但 OSM 里没有对应建筑轮廓的点位（按配准结果落位）。
 # 主要是一些独立构筑物和校门，以及 2025-05 影像上还没建成、OSM 未收录的楼。
+# 影像上可见、但 OSM 缺轮廓的建筑。
+# 轮廓由 analysis/scripts/detect_missing_buildings.py 从 Esri 影像提取
+# （按屋顶颜色分割 + 拟合形状），已逐栋叠图核对。
+EXTRA_BUILDINGS = [
+    {
+        # 学生活动中心西侧的长条楼，红褐屋顶。影像上边界清晰，矩形拟合贴合。
+        "name": "超市", "levels": 2, "height_m": 6.4,
+        "basis": "按单层商业建筑 2 层估算",
+        "sub": "retail",
+        "ring": [
+            [117.634706, 39.069781], [117.634852, 39.069781],
+            [117.634852, 39.070161], [117.634706, 39.070161],
+            [117.634706, 39.069781],
+        ],
+    },
+    {
+        # 湖边圆形大楼（第二报告厅）。拟合圆：直径约 58 米。
+        # 用 24 边形近似圆，避免在数据里存上百个点。
+        "name": "长河楼（二报）", "levels": 3, "height_m": 12.8,
+        "basis": "按报告厅类建筑 3 层估算",
+        "sub": "school",
+        "ring": None,   # 下面按圆心+半径生成
+        "circle": {"lon": 117.641566, "lat": 39.067376, "r_m": 29.0, "n": 24},
+    },
+]
+
+
+def _circle_ring(clon, clat, r_m, n=24):
+    """圆心 + 米半径 → 经纬度多边形。纬度方向 110574 m/deg，经度按 cos 修正。"""
+    mlat = 110574.0
+    mlon = 111320.0 * math.cos(math.radians(clat))
+    ring = [[round(clon + r_m * math.cos(2 * math.pi * i / n) / mlon, 6),
+             round(clat + r_m * math.sin(2 * math.pi * i / n) / mlat, 6)] for i in range(n)]
+    ring.append(ring[0])
+    return ring
+
+
+for _b in EXTRA_BUILDINGS:
+    if _b.get("ring") is None and _b.get("circle"):
+        c = _b["circle"]
+        _b["ring"] = _circle_ring(c["lon"], c["lat"], c["r_m"], c.get("n", 24))
+
+
+# 影像上可见、但 OSM 没有对应轮廓的点位（校门、独立构筑物）。
 POIS = [
     {"name": "医务室", "lon": 117.63645, "lat": 39.06980,
      "note": "1 号公寓旁"},
@@ -136,9 +180,7 @@ POIS = [
     # 东门按校园道路的东端点定：有条校内路正好通到东边界（lat 39.06676）。
     # 原来标在 39.06630，比真正的门口偏南约 50 米。
     {"name": "东门",   "lon": 117.64210, "lat": 39.06678, "note": "校园东侧校门，正对厦门路入口"},
-    # 长河楼就是二报，不再单独标一个「二报」的点
-    {"name": "长河楼（二报）", "lon": 117.64153, "lat": 39.06760,
-     "note": "湖边弧形楼，第二报告厅"},
+    # 长河楼、超市已改为带轮廓的建筑（见 EXTRA_BUILDINGS），不再用点位标注。
     # 下面两个也是 OSM 里没有名称的：
     #   钟楼 —— 体育场东南角、看台外侧的独立小塔（卫星影像上影子很长，说明塔身较高）
     # 变电站不在这里 —— 它 OSM 里有轮廓（way/1497712919），走 NAME_MAP 给它命名，
@@ -156,11 +198,8 @@ POIS = [
     {"name": "网球场", "lon": 117.63740, "lat": 39.06986, "note": "室外网球场（10 块）"},
     {"name": "体育场", "lon": 117.63744, "lat": 39.06835, "note": "田径场，中间是足球场"},
 
-    # 这两个 OSM 没有轮廓，平面图又是手绘透视，没法直接套坐标。
-    # 用邻近已知建筑的图上距离按比例换算：超市借学生活动中心，10号公寓借实训基地和篮球场。
-    # 换算结果再叠到卫星影像上看落点，误差预计在 20 米上下，需要微调改这两个数即可。
-    {"name": "超市", "lon": 117.63495, "lat": 39.07015,
-     "note": "校园西北角，学生活动中心西侧"},
+    # 10 号公寓 OSM 没有轮廓，平面图又是手绘透视，没法直接套坐标。
+    # 用邻近已知建筑的图上距离按比例换算，叠到卫星影像上核对落点，误差约 20 米。
     {"name": "10号公寓", "lon": 117.63305, "lat": 39.06758,
      "note": "校园西侧边缘，篮球场以西"},
 ]
@@ -260,7 +299,24 @@ def build_campus_geojson() -> dict:
 
         feats.append({"type": "Feature", "geometry": ft["geometry"], "properties": props})
 
-    # 规划图上有、但 OSM 没有轮廓的点位（校门、独立建筑）
+    # 影像上可见、但 OSM 没收录轮廓的建筑。
+    # 这些是学校实有的楼，二维/三维都要靠轮廓才画得出来，
+    # 所以从 Esri 影像上按屋顶颜色分割、拟合形状后补进来
+    # （提取过程见 analysis/scripts/detect_missing_buildings.py）。
+    # 位置精度：轮廓贴合影像，但影像是 2025-05 拍的，若学校后来改建需重新核对。
+    for b in EXTRA_BUILDINGS:
+        feats.append({
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [b["ring"]]},
+            "properties": {
+                "kind": "building", "sub": b.get("sub", "school"),
+                "name": b["name"], "name_src": "image",
+                "levels": b["levels"], "height_m": b["height_m"],
+                "height_basis": b["basis"],
+            },
+        })
+
+    # 规划图上有、但 OSM 没有轮廓的点位（校门、独立构筑物）
     for poi in POIS:
         feats.append({
             "type": "Feature",
