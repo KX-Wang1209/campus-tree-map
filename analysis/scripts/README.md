@@ -9,7 +9,8 @@
 | 数据 | 来源 | 状态 |
 |---|---|---|
 | 校园边界 | OpenStreetMap | 有，31 顶点多边形，贴合实际围墙 |
-| 建筑轮廓 | OpenStreetMap | 有，26 栋，与卫星影像逐栋核对贴合良好 |
+| 建筑轮廓 | OpenStreetMap | 有，29 栋，与卫星影像逐栋核对贴合良好 |
+| 建筑名称 | 学校规划鸟瞰效果图 | 有，红字标注经配准后套到 OSM 建筑上 |
 | 建筑高度/层数 | — | **无**，OSM 无 height/levels 标签，需按类型估算 |
 | 道路、球场、水体、绿地 | OpenStreetMap | 有 |
 | 卫星影像 | Esri World Imagery | 有，2025-05-20 拍摄，原生 0.34 m/px |
@@ -19,13 +20,19 @@
 
 ```bash
 # 1. 拉取 OSM 矢量数据（需要联网）
-python analysis/scripts/fetch_osm_campus.py
+python3 analysis/scripts/fetch_osm_campus.py
 
 # 2. 生成建筑体块高度估算与底图（需要联网下载影像瓦片）
-python analysis/scripts/build_campus_3d.py
+python3 analysis/scripts/build_campus_3d.py
+
+# 3. 生成网页用的数据文件（含规划图建筑名、物种库、离线瓦片）
+python3 analysis/scripts/build_web_assets.py
+
+# 4. 从规划效果图里抠红色标注（核对用，结果落在 /tmp/render_labels/）
+python3 analysis/scripts/extract_render_labels.py
 ```
 
-依赖：`requests`、`Pillow`。Python 3.10+。
+依赖：`requests`、`Pillow`、`numpy`、`scipy`。Python 3.10+。
 
 ## 输入
 
@@ -44,6 +51,11 @@ python analysis/scripts/build_campus_3d.py
 | `data/processed/campus_buildings_3d.geojson` | 26 栋建筑，带估算高度（WGS84，供三维使用） |
 | `data/processed/campus_buildings_3d.csv` | 同上，表格形式 |
 | `figures/campus_basemap.png` | 校园卫星底图 + 建筑轮廓 + 边界 |
+
+> **建筑数为什么有两个值**：这条管线产出 26 栋（纯 OSM 来源）。
+> 网页实际用的 `web/campus.json` 是 **29 栋**——后来从卫星影像上
+> 补了 OSM 没有轮廓的三栋（经管系、超市、长河楼）。
+> 两者相差 3 栋，不是数据不一致，是管线版本不同。
 
 ## 结果关键参数
 
