@@ -11,6 +11,7 @@
 | 校园边界 | OpenStreetMap | 有，31 顶点多边形，贴合实际围墙 |
 | 建筑轮廓 | OpenStreetMap | 有，29 栋，与卫星影像逐栋核对贴合良好 |
 | 建筑名称 | 学校规划鸟瞰效果图 | 有，红字标注经配准后套到 OSM 建筑上 |
+| 10 号公寓轮廓 | 师生实地测绘 | 有，四个实测屋角（影像上抠不出来） |
 | 建筑高度/层数 | — | **无**，OSM 无 height/levels 标签，需按类型估算 |
 | 道路、球场、水体、绿地 | OpenStreetMap | 有 |
 | 卫星影像 | Esri World Imagery | 有，2025-05-20 拍摄，原生 0.34 m/px |
@@ -52,10 +53,11 @@ python3 analysis/scripts/extract_render_labels.py
 | `data/processed/campus_buildings_3d.csv` | 同上，表格形式 |
 | `figures/campus_basemap.png` | 校园卫星底图 + 建筑轮廓 + 边界 |
 
-> **建筑数为什么有两个值**：这条管线产出 26 栋（纯 OSM 来源）。
-> 网页实际用的 `web/campus.json` 是 **29 栋**——后来从卫星影像上
-> 补了 OSM 没有轮廓的三栋（经管系、超市、长河楼）。
-> 两者相差 3 栋，不是数据不一致，是管线版本不同。
+> **建筑数为什么有这些值**：这条管线产出 26 栋（纯 OSM 来源）。
+> 网页实际用的 `web/campus.json` 是 **30 栋**——后来补了 OSM 没有轮廓的四栋：
+> 经管系（从 220 米长楼里切出来的）、超市、长河楼（前三个由影像提取），
+> 以及 10 号公寓（师生实测四个屋角）。
+> 数目不同不是数据不一致，是管线版本不同。
 
 ## 结果关键参数
 
@@ -68,7 +70,7 @@ python3 analysis/scripts/extract_render_labels.py
   说明插值会高估树冠数量。
 
 - `DEFAULT_STOREY_H = 3.2`、`DORM_STOREYS = 6`、`TEACH_STOREYS = 5`、`DEFAULT_STOREYS = 4`
-  建筑高度估算参数，单位为米/层。**26 栋建筑的高度全部为估算值**，
+  建筑高度估算参数，单位为米/层。**所有建筑的高度都是估算值**，
   每栋在输出里都有 `height_basis` 字段标明依据。
   要精确高度需向学校基建处索取图纸。
 
@@ -84,7 +86,7 @@ python3 analysis/scripts/extract_render_labels.py
    **不能直接当数据用，只能作为人工核对的底稿**。
 
 2. **建筑高度是估算的**。OSM 在本校区没有任何 `height` 或 `building:levels`
-   标签，26 栋建筑全部按建筑类型套用默认层数。
+   标签，所有建筑都按建筑类型套用默认层数。
 
 3. **坐标系**。输出为 WGS-84（EPSG:4326）。接入高德（GCJ-02）或
    百度（BD-09）底图时必须做坐标转换，否则会有几十米偏移。
