@@ -181,20 +181,23 @@ sh launcher/build.sh      # 需要 Go 工具链
 ## 目录结构
 
 ```
-web/                  网页应用（纯前端静态页面）
+web/                  网页应用（纯前端静态页面，也是学生实际用的那份）
 ├── index.html
 ├── app.js              平面视图 + 数据管理 + 云端协作
 ├── view3d.js           三维视图（MapLibre GL）
 ├── server.py           局域网协作服务器（只用 Python 标准库）
-├── campus.json         校园矢量数据（29 栋建筑，带估算高度）
+├── campus.json         校园矢量数据（30 栋建筑，带估算高度）
 ├── species.json        物种库（70 种）
 ├── tiles/              离线地图瓦片 z17-z19，共 546 张
 └── vendor/             Leaflet + MapLibre GL + CloudBase SDK
 
-launcher/             一键启动器
+check_online.py       比对线上站点和本地 web/，防止改完忘了上传
+release.sh            一条命令发版（提交 → 打标签 → 推送 → 查线上是否同步）
+
+launcher/             打包成双击即用的程序（默认不用，见「怎么把网页跑起来」）
 ├── main.go             Go 写的服务（把整个网页打包进单个可执行文件）
 ├── build.sh            一次生成 macOS 和 Windows 两个版本
-└── accept.sh           自动验收脚本
+└── accept.sh           自动验收脚本（需要先跑 build.sh）
 
 analysis/scripts/     数据获取与分析
 ├── fetch_osm_campus.py        从 OpenStreetMap 拉校园矢量数据
@@ -269,5 +272,5 @@ Release 页面就好看。
 
 天津滨海职业学院（Tianjin Coastal Polytechnic）老校区植物记录项目。
 
-校园约 **53.8 公顷（807 亩）**，29 栋建筑，建筑密度 7.7%。
+校园约 **53.8 公顷（807 亩）**，30 栋建筑，建筑密度 7.7%。
 按一般高校绿地密度估算，乔木可能 2000～5000 株。

@@ -17,17 +17,21 @@ from __future__ import annotations
 import hashlib
 import pathlib
 import sys
+import urllib.error
+import urllib.parse
 import urllib.request
 
 WEB = ("https://campus-tree-map-d9fro6lv4b0094f8-1309202203"
        ".tcloudbaseapp.com/web/")
 LOCAL = pathlib.Path(__file__).resolve().parent / "web"
 
-# 页面真正会去读的文件。瓦片目录太大，单独跳过。
+# 页面真正会去读的文件，外加学生能直接打开的说明文档。
+# 瓦片目录太大，单独跳过。
 FILES = [
     "index.html", "app.js", "app.css", "view3d.js",
     "campus.json", "species.json", "bounds.json", "tiles_meta.json",
     "logo.svg", "logo.png",
+    "使用说明.md",
 ]
 
 CONSOLE = ("https://tcb.cloud.tencent.com/dev"
@@ -39,11 +43,17 @@ def md5(data: bytes) -> str:
 
 
 def fetch(name: str) -> bytes | None:
-    req = urllib.request.Request(WEB + name,
+    # 中文文件名要转义，否则 http 库按 ASCII 发送会直接报错
+    url = WEB + urllib.parse.quote(name)
+    req = urllib.request.Request(url,
                                  headers={"Cache-Control": "no-cache"})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             return r.read()
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise
     except Exception:
         return None
 
