@@ -65,8 +65,13 @@ if [ -n "$(git status --porcelain)" ]; then
   git status --short | sed 's/^/  /'
   echo ""
   printf "  提交说明（直接回车用默认）："
-  # 同下：没有终端时按默认走，别让 set -e 掐断
+  # 没有终端时（脚本被自动调用）read 会立刻失败。这时按默认说明走，
+  # 别让 set -e 掐断——掐断会留下"标签建了但没推"的半截状态，很难查。
+  # 默认说明优先用本次的版本说明，实在没有才退回标签号，
+  # 免得提交记录里出现一长串没信息的 "v1.6"。
   read -r MSG || MSG=""
+  [ -z "$MSG" ] && MSG="$TAG $NOTE"
+  MSG=$(printf '%s' "$MSG" | sed 's/[[:space:]]*$//')
   [ -z "$MSG" ] && MSG="$TAG"
   git add -A
   git commit -q -m "$MSG"
