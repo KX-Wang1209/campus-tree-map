@@ -65,7 +65,8 @@ if [ -n "$(git status --porcelain)" ]; then
   git status --short | sed 's/^/  /'
   echo ""
   printf "  提交说明（直接回车用默认）："
-  read -r MSG
+  # 同下：没有终端时按默认走，别让 set -e 掐断
+  read -r MSG || MSG=""
   [ -z "$MSG" ] && MSG="$TAG"
   git add -A
   git commit -q -m "$MSG"
@@ -121,7 +122,10 @@ echo ""
 
 # --- 推送 ---
 printf "  推送到 GitHub？(Y/n)："
-read -r GO
+# 没有终端时（比如脚本被自动调用）read 会立刻失败。
+# 提示语的默认是 Y，所以这里也按默认走，而不是让 set -e 把脚本掐断
+# —— 掐断会留下"标签建了但没推"的半截状态，很难查。
+read -r GO || { GO=""; echo ""; echo "（没有终端输入，按默认继续推送）"; }
 case "$GO" in
   [Nn]*) echo "  已取消推送。标签还留在本地。"; exit 0 ;;
 esac
