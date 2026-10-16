@@ -257,10 +257,25 @@ async function flushPending() {
    --------------------------------------------------------------- */
 const CLOUD_ENV = 'campus-tree-map-d9fro6lv4b0094f8';
 const CLOUD_REGION = 'ap-shanghai';
-// 多久问一次「有没有新记录」。这个值直接决定数据库消耗：
-// 每问一次都算一次数据库调用，而数据库算力正是资源点的大头
-// （实测占九成）。15 秒足够及时，消耗只有 5 秒的三分之一。
+// 多久问一次「有没有新记录」。
+//
+// 每问一次就是一次数据库调用，而数据库算力占了资源点的九成，
+// 所以这个值直接决定花多少钱。但比「多久问一次」更关键的是
+// **没人看的时候根本不该问** —— 页面挂着不等于有人在用。
+//
+// 判据放在「最近有没有人碰过这个页面」上（见 isIdle）：
+// 走开、手机揣兜里、投屏给别人看而自己不动，都是同一个特征——没有输入。
+// 这一条同时覆盖这些情况，不需要按场景分别判断。
 const CLOUD_POLL_MS = 15000;
+
+// 多久没有输入就当作没人在用，停止轮询。
+//
+// 5 分钟这个值要照顾两种情况，取中间的平衡：
+//   太短 —— 学生站着看地图、老师对着大屏讲解，手不动但人在看，
+//           会被误判成没人在用；
+//   太长 —— 老师看完就走、手机揣兜里，白问的时间就拉长了。
+// 5 分钟足够跨过"看着屏幕想事情"，又不至于让走开太久还一直问。
+const IDLE_MS = 5 * 60 * 1000;
 
 // 明确列出要读的列，故意不写 * —— 库里有几列（比如建库时那个邀请码）
 // 没给读权限，用 select('*') 会被数据库直接拒绝。
@@ -480,6 +495,77 @@ const cloud = {
   hasItems: false,   // 数据库有没有 items 列（一处多树种）
 };
 
+/* ---------------------------------------------------------------
+   没人在用的时候别问服务器
+
+   云端模式下每 15 秒要问一次「有没有新记录」，这是一次数据库调用。
+   数据库算力占了资源点消耗的九成，而页面挂着不等于有人在用：
+   老师开着页面走开、学生记完把手机揣兜里（屏幕还亮着）、
+   投到大屏给别人看，这些时候轮询全是白烧的。
+
+   判据只看一件事：**最近有没有人碰过这个页面**。
+   走开、揣兜里、投屏，表现都是「没有输入」，所以一条规则就够，
+   不需要分辨具体是哪种情况。
+   --------------------------------------------------------------- */
+
+let lastActive = Date.now();
+let wasIdle = false;          // 上一次检查时是不是没人用
+
+// 记一次「有人在用」。挂多个事件是因为不同设备上「有动作」的表现不同：
+// 手机主要是触摸，电脑是鼠标和键盘，投屏演示时可能只是翻页。
+for (const ev of ['pointerdown', 'pointermove', 'keydown', 'wheel',
+                  'touchstart', 'focus']) {
+  window.addEventListener(ev, () => { lastActive = Date.now(); },
+    { passive: true, capture: true });
+}
+
+/** 现在还有人在用吗 */
+function isIdle() {
+  // 页面被切走（切标签页、锁屏、切到别的 App）就不算在用，
+  // 这条以前就有，比计时更可靠。
+  if (document.hidden) return true;
+
+  // 正在环绕 = 有人在用它演示（投屏给人看）。
+  // 这时屏幕前可能确实有人看着，只是不动手；按输入判断会误当成没人用。
+  // 环绕本来就是"要给别人看"的动作，所以借它把这种情况认出来。
+  //
+  // 顺带把活动时间刷新一下：环绕停下来的那一刻，屏幕前的人可能还在看，
+  // 不刷新的话会立刻被判成空闲（上一次输入是很久以前了），
+  // 中间一点缓冲都没有。刷新后至少还能再多同步几分钟。
+  if (typeof VIEW3D !== 'undefined' && VIEW3D.orbiting) {
+    lastActive = Date.now();
+    return false;
+  }
+
+  return Date.now() - lastActive > IDLE_MS;
+}
+
+/**
+ * 定期看一眼「是不是又有人来用了」。
+ *
+ * 不做这一步的话，人回来以后要等下一次轮询才知道有没有新数据，
+ * 而中间那段空档可能已经跳过了几十轮 —— 看着就像"数据没同步"。
+ * 所以一旦从「没人用」变回「有人用」，立刻补一次。
+ *
+ * 具体的「有人在动」由上面那组事件记时间；这里只负责发现状态变化。
+ */
+function watchIdle() {
+  const nowIdle = isIdle();
+  if (wasIdle && !nowIdle) pollCloud();
+  wasIdle = nowIdle;
+}
+setInterval(watchIdle, 5000);
+
+// 切标签页回来比鼠标动更快，单独接一下，别等那 5 秒一跳。
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;      // 切走不用管，轮询自己会停
+  lastActive = Date.now();
+  // 空闲期间跳过了很多轮，回来第一眼不能是旧数据，所以立刻补一次。
+  // 不能只等 watchIdle 那一跳 —— 它 5 秒才跑一次，而且此刻 wasIdle
+  // 可能已经在上一次 tick 里被重置过，未必触发得到。
+  if (wasIdle) { wasIdle = false; pollCloud(); }
+});
+
 /** 云端的一行 → 页面里用的记录 */
 function rowToTree(r) {
   return normalizeRecord({
@@ -627,7 +713,9 @@ async function pullAll() {
 
 /** 每隔几秒问一下"有没有新数据"，变了才去拉 */
 async function pollCloud() {
-  if (!cloud.enabled || cloud.busy || document.hidden) return;
+  // 没人在用就不问（见 isIdle）。这是省资源点最要紧的一条：
+  // 页面挂着不动的那段时间，本来一次数据库调用都不该发。
+  if (!cloud.enabled || cloud.busy || isIdle()) return;
   cloud.busy = true;
   try {
     const v = await cloud.db.from('sync_state').select('version').limit(1);
