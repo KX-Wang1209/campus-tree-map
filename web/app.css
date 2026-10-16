@@ -301,7 +301,8 @@ html, body {
   text-align: center; padding: 0 3px;
   box-shadow: 0 1px 3px rgba(0,0,0,.3);
 }
-.plant-3d .pin-count.multi { background: #5e35b1; color: #fff; border-color: #4527a0; }
+/* 三维里的角标：位置和平面不同，颜色沿用上面 .pin-count.multi 那份，
+   不再各写一遍 —— 两处各写一份正是上次平面漏掉字色、看不清的原因。 */
 .plant-3d .pin-count.several {
   border-style: dashed; border-color: #78909c;
   color: #546e7a; padding: 0 4px; font-size: 9.5px;
@@ -646,8 +647,18 @@ html, body {
 /* 只能看的记录：不给点的东西收起来 */
 .sheet.readonly .sp-card { background: #f6f7f4; }
 
-/* 地图角标：一处记了几种 */
-.pin-count.multi { background: #5e35b1; min-width: 30px; }
+/* 地图角标：一处记了几种。
+   底色的选择有两个约束，不是随手挑的：
+     1. 必须压得住白字（小字要 4.5:1 以上）—— 所以用深色；
+     2. 不能撞树种色 —— 角标就贴在植物标记上，而标记的颜色正代表树种。
+        原来用的紫 #5e35b1 恰好就是紫穗槐的色，会让人看混。
+   深蓝 #1a237e 两项都满足：白字 13.2:1，离最近的树种色差 79。
+   字形和底色在这里定义一次，三维那份不再另写（见下方 .plant-3d）——
+   以前两处各写一份，平面这份漏了 color，深紫底配深灰字几乎看不清。 */
+.pin-count.multi {
+  background: #1a237e; color: #fff; border-color: #0d1457;
+  min-width: 30px;
+}
 
 /* ============ 成员管理 ============ */
 .mem-add {
