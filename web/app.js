@@ -509,7 +509,6 @@ const cloud = {
    --------------------------------------------------------------- */
 
 let lastActive = Date.now();
-let wasIdle = false;          // 上一次检查时是不是没人用
 
 // 记一次「有人在用」。挂多个事件是因为不同设备上「有动作」的表现不同：
 // 手机主要是触摸，电脑是鼠标和键盘，投屏演示时可能只是翻页。
@@ -541,29 +540,32 @@ function isIdle() {
 }
 
 /**
- * 定期看一眼「是不是又有人来用了」。
+ * 从「没人用」变回「有人用」时，立刻补一次。
  *
- * 不做这一步的话，人回来以后要等下一次轮询才知道有没有新数据，
- * 而中间那段空档可能已经跳过了几十轮 —— 看着就像"数据没同步"。
- * 所以一旦从「没人用」变回「有人用」，立刻补一次。
+ * 为什么要补：空闲期间跳过了很多轮，人回来第一眼不该是旧数据。
  *
- * 具体的「有人在动」由上面那组事件记时间；这里只负责发现状态变化。
+ * 为什么不用「上次是不是空闲」当开关：那样要把状态存起来，而这个判断
+ * 有两处触发（下面那个定时器、以及切回前台），两边都会写这份状态，
+ * 谁先跑就把对方要用的信息清掉了 —— 实测切回前台那次补拉就是因此丢的。
+ * 所以改成只看「眼下该不该同步、以及距上次同步过去多久」，不存状态，
+ * 也就不存在两处抢着改的问题。
  */
-function watchIdle() {
-  const nowIdle = isIdle();
-  if (wasIdle && !nowIdle) pollCloud();
-  wasIdle = nowIdle;
-}
-setInterval(watchIdle, 5000);
+let lastPollAt = 0;         // 上次真正发过同步请求的时间
+const CATCHUP_MS = 3000;    // 距上次同步超过这么久，回来就补一次
 
-// 切标签页回来比鼠标动更快，单独接一下，别等那 5 秒一跳。
+function catchUpIfStale() {
+  if (cloud.busy || isIdle()) return;
+  if (Date.now() - lastPollAt < CATCHUP_MS) return;
+  pollCloud();
+}
+
+setInterval(catchUpIfStale, 5000);
+
+// 切标签页回来比定时器更快，单独接一下，别等那 5 秒一跳。
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;      // 切走不用管，轮询自己会停
-  lastActive = Date.now();
-  // 空闲期间跳过了很多轮，回来第一眼不能是旧数据，所以立刻补一次。
-  // 不能只等 watchIdle 那一跳 —— 它 5 秒才跑一次，而且此刻 wasIdle
-  // 可能已经在上一次 tick 里被重置过，未必触发得到。
-  if (wasIdle) { wasIdle = false; pollCloud(); }
+  lastActive = Date.now();          // 人就在看着，先记一次活动
+  catchUpIfStale();
 });
 
 /** 云端的一行 → 页面里用的记录 */
@@ -717,6 +719,7 @@ async function pollCloud() {
   // 页面挂着不动的那段时间，本来一次数据库调用都不该发。
   if (!cloud.enabled || cloud.busy || isIdle()) return;
   cloud.busy = true;
+  lastPollAt = Date.now();      // 记下真的发过请求，回来时据此判断要不要补
   try {
     const v = await cloud.db.from('sync_state').select('version').limit(1);
     const ver = v.data && v.data[0] ? v.data[0].version : null;
