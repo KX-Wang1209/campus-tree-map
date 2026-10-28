@@ -58,7 +58,10 @@ function toast(msg, isErr = false) {
   t.textContent = msg;
   t.className = 'toast' + (isErr ? ' err' : '');
   clearTimeout(t._timer);
-  t._timer = setTimeout(() => t.classList.add('hidden'), 2400);
+  // 报错要留够看的时间：像「额度已用完」这种，2 秒根本来不及读，
+  // 人只会看到它闪一下就没了，反而以为是自己点错了。按字数给时间。
+  const ms = isErr ? Math.min(8000, Math.max(2400, msg.length * 220)) : 2400;
+  t._timer = setTimeout(() => t.classList.add('hidden'), ms);
 }
 
 function uid() {
@@ -493,6 +496,8 @@ const cloud = {
   timer: null,
   busy: false,
   hasItems: false,   // 数据库有没有 items 列（一处多树种）
+  failReason: '',    // 连不上云的原因（给人看的说法），给提示用
+  photoError: '',    // 取照片最后失败的原因，导出时用它说话
 };
 
 /* ---------------------------------------------------------------
@@ -640,17 +645,32 @@ function treeToInsert(t) {
   return { id: t.id, ...treeFields(t), owner_name: ident.name, project: '', created_at: t.created };
 }
 
-/** 连云端。连不上就返回 false，交给后面的模式 */
+/** 连云端。连不上就返回 false，交给后面的模式
+ *
+ *  连不上的原因必须留下来（cloud.failReason），否则上层只能笼统说
+ *  「检查网络」—— 额度用尽、没登录、域名没备案全是一个说法，
+ *  查起来得从头猜。这里把云端给的原话记下来，供提示用。 */
 async function initCloud() {
-  if (typeof window.cloudbase === 'undefined') return false;
+  cloud.failReason = '';
+  if (typeof window.cloudbase === 'undefined') {
+    cloud.failReason = '云开发 SDK 没加载上';
+    return false;
+  }
   try {
     const app = window.cloudbase.init({ env: CLOUD_ENV, region: CLOUD_REGION });
     const auth = await app.auth.signInAnonymously();
-    if (auth && auth.error) return false;
+    if (auth && auth.error) {
+      // 额度用尽时这里就会报 resource_exhausted
+      cloud.failReason = describeCloudError(auth.error);
+      return false;
+    }
 
     const db = app.rdb();
     const probe = await db.from('sync_state').select('version').limit(1);
-    if (probe.error) return false;
+    if (probe.error) {
+      cloud.failReason = describeCloudError(probe.error);
+      return false;
+    }
 
     // 数据库有没有「范围」「多树种」这两列？老库没有。
     // 不做这一步的话，列清单里带上不存在的列会让整条查询失败，
@@ -682,8 +702,32 @@ async function initCloud() {
     return true;
   } catch (e) {
     console.warn('云端连不上，改用其它模式', e);
+    cloud.failReason = describeCloudError(e);
     return false;
   }
+}
+
+/**
+ * 把云端的错误翻成一句人话。
+ *
+ * 原始错误是英文错误码（resource_exhausted / 401 / ...），直接甩给用户
+ * 看不懂；但也不能丢掉 —— 出问题时它是唯一能定位的线索。
+ * 所以认得出来的给中文解释，认不出来的原样带上，别硬猜。
+ */
+function describeCloudError(e) {
+  if (!e) return '未知原因';
+  const raw = [e.code, e.status, e.message].filter(Boolean).join(' ').toLowerCase();
+  if (raw.includes('resource_exhausted') || raw.includes('rate_limited')) {
+    return '云端额度已用完（需要续期或升级套餐）';
+  }
+  if (raw.includes('auth') || raw.includes('401') || raw.includes('unauthor')) {
+    return '云端身份验证没通过';
+  }
+  if (raw.includes('timeout') || raw.includes('network') || raw.includes('fetch')) {
+    return '连不上云端（网络问题）';
+  }
+  const msg = e.message || e.code || e.status;
+  return msg ? `云端报错：${msg}` : '未知原因';
 }
 
 /** 全量拉取。分页取，避免一次要太多被服务端截断 */
@@ -830,17 +874,40 @@ function mergePhotos(local, remote) {
   return out;
 }
 
-/** 把一条记录的 photos 变成能直接显示的地址（本机 dataURL 原样返回） */
+/**
+ * 把一条记录的 photos 变成能直接显示的地址（本机 dataURL 原样返回）。
+ *
+ * 两个要点：
+ *   · 批量换链接。getTempFileURL 一次能收一串 fileID，逐张换的话
+ *     300 多张就是 300 多次请求 —— 慢，而且每次都算云端调用。
+ *   · 失败要记下来。以前这里把异常整个吞掉，上层只能笼统报「检查网络」，
+ *     把「额度用完了」误说成网络问题，白查很久。
+ */
+const PHOTO_BATCH = 50;        // 一次换多少个下载链接
+
 async function photoSrcs(list) {
   const arr = list || [];
   const need = arr.filter((p) => !String(p).startsWith('data:') && !photoUrls[p]);
-  if (need.length && cloud.enabled) {
-    try {
-      const r = await cloud.app.getTempFileURL({ fileList: need });
-      for (const it of (r.fileList || [])) {
-        rememberPhotoUrl(it.fileID || it.fileid, it.tempFileURL || it.download_url);
+  if (need.length) {
+    if (!cloud.enabled || !cloud.app) {
+      // 云端没连上。原因可能是额度用完、可能没登录，别都说成网络问题
+      cloud.photoError = cloud.failReason
+        ? `取不到照片：${cloud.failReason}`
+        : '取不到照片：云端没连上';
+    } else {
+      try {
+        for (let i = 0; i < need.length; i += PHOTO_BATCH) {
+          const chunk = need.slice(i, i + PHOTO_BATCH);
+          const r = await cloud.app.getTempFileURL({ fileList: chunk });
+          for (const it of (r.fileList || [])) {
+            rememberPhotoUrl(it.fileID || it.fileid, it.tempFileURL || it.download_url);
+          }
+        }
+        cloud.photoError = '';
+      } catch (e) {
+        cloud.photoError = `取不到照片：${describeCloudError(e)}`;
       }
-    } catch (e) { /* 换不到就先不显示，下次再说 */ }
+    }
   }
   return arr.map((p) => (String(p).startsWith('data:') ? p : (photoUrls[p] || '')));
 }
@@ -2799,14 +2866,12 @@ async function exportWithPhotos() {
   btn.disabled = true;
 
   try {
-    // 1) 先把每条记录的照片地址换成能下载的链接
+    // 1) 先把所有照片的下载链接一次性换好（内部按每批 50 个走）。
+    //    以前是逐张换，309 张就是 309 次请求。
     const all = [];
     for (const t of withPhoto) for (const p of t.photos) if (!all.includes(p)) all.push(p);
-    let done = 0;
-    for (const p of all) {
-      btn.textContent = `取照片… ${++done}/${all.length}`;
-      await photoSrcs([p]);
-    }
+    btn.textContent = `取照片… 0/${all.length}`;
+    await photoSrcs(all);
 
     // 2) 逐张下载。文件名带记录 ID，能对回表里的行
     const files = [];
@@ -2838,7 +2903,11 @@ async function exportWithPhotos() {
       }
     }
 
-    if (!files.length) { toast('照片都没取到，检查一下网络', true); return; }
+    if (!files.length) {
+      // 照实说原因，别一律推给网络 —— 最常见其实是额度用完或没连上云
+      toast(cloud.photoError || '照片一张都没取到', true);
+      return;
+    }
 
     // 3) 清单 + 记录表 + 照片，一起打包
     btn.textContent = '打包中…';
